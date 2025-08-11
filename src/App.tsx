@@ -23,6 +23,16 @@ type SavedFilter = {
   rows: string[]
 }
 
+type SavedSuite = {
+  id: string
+  name: string
+  createdAt: string
+  selected: string[]
+  dataKeySections: string[]
+  sectionFilters: Record<number, string | null>
+  sectionRows: Record<number, string[]>
+}
+
 function App() {
   const [manifest, setManifest] = useState<Manifest | null>(null)
   const [loading, setLoading] = useState(true)
@@ -49,6 +59,20 @@ function App() {
     } catch {}
     return []
   })
+  // Comparison suites (saved app state)
+  const [savedSuites, setSavedSuites] = useState<SavedSuite[]>(() => {
+    try {
+      const raw = localStorage.getItem('jsonviz_suites_v1')
+      return raw ? JSON.parse(raw) : []
+    } catch {
+      return []
+    }
+  })
+  const [activeSuiteId, setActiveSuiteId] = useState<string | undefined>(undefined)
+  const [saveModalOpen, setSaveModalOpen] = useState(false)
+  const [saveName, setSaveName] = useState('')
+  // When loading a suite, defer applying dataKeySections until keys are available
+  const pendingSuiteKeysRef = useRef<string[] | null>(null)
   // Per-section applied filter ID (single) and explicit selected rows
   const [sectionFilters, setSectionFilters] = useState<Record<number, string | null>>({})
   const [sectionRows, setSectionRows] = useState<Record<number, string[]>>({})
@@ -88,6 +112,12 @@ function App() {
       localStorage.setItem('jsonviz_filters_v2', JSON.stringify(savedFilters))
     } catch {}
   }, [savedFilters])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('jsonviz_suites_v1', JSON.stringify(savedSuites))
+    } catch {}
+  }, [savedSuites])
 
   const totals = useMemo(() => {
     const totalFiles = manifest?.folders.reduce((acc, f) => acc + f.files.length, 0) ?? 0
@@ -132,6 +162,59 @@ function App() {
     const all = folder.files.every((f) => selected.has(f.path))
     return some && !all
   }
+
+  // Build a saved suite object from current UI state
+  function buildSuiteFromCurrent(name: string): SavedSuite {
+    const keys = dataKeySections
+      .map((k) => (k ?? null))
+      .filter((k): k is string => k !== null)
+    // Remap section indexes to compacted keys indexes
+    const indexMap = new Map<number, number>()
+    let j = 0
+    dataKeySections.forEach((k, i) => {
+      if (k != null) {
+        indexMap.set(i, j)
+        j += 1
+      }
+    })
+    const compactFilters: Record<number, string | null> = {}
+    Object.entries(sectionFilters).forEach(([idxStr, val]) => {
+      const origIdx = Number(idxStr)
+      if (!Number.isNaN(origIdx) && indexMap.has(origIdx)) {
+        const newIdx = indexMap.get(origIdx) as number
+        compactFilters[newIdx] = val
+      }
+    })
+    const compactRows: Record<number, string[]> = {}
+    Object.entries(sectionRows).forEach(([idxStr, rows]) => {
+      const origIdx = Number(idxStr)
+      if (!Number.isNaN(origIdx) && indexMap.has(origIdx)) {
+        const newIdx = indexMap.get(origIdx) as number
+        compactRows[newIdx] = rows
+      }
+    })
+    return {
+      id: Math.random().toString(36).slice(2, 9),
+      name,
+      createdAt: new Date().toISOString(),
+      selected: Array.from(selected),
+      dataKeySections: keys,
+      sectionFilters: compactFilters,
+      sectionRows: compactRows,
+    }
+  }
+
+  function loadSuite(suite: SavedSuite) {
+    setSelected(new Set(suite.selected))
+    // Defer applying keys until we know commonDataKeys include them
+    pendingSuiteKeysRef.current = suite.dataKeySections ?? []
+    setSectionFilters(suite.sectionFilters ?? {})
+    setSectionRows(suite.sectionRows ?? {})
+    setActiveSuiteId(suite.id)
+    message.success(`Loaded "${suite.name}"`)
+  }
+
+  // NOTE: Effect applying pending suite keys is defined later, after commonDataKeys
 
   // Fetch JSON content for selected files (cache results by path)
   useEffect(() => {
@@ -198,6 +281,17 @@ function App() {
       // 3) Ensure exactly one trailing null placeholder
       return compact[compact.length - 1] === null ? compact : [...compact, null]
     })
+  }, [commonDataKeys])
+
+  // Apply pending suite keys once commonDataKeys are ready (placed after declaration)
+  useEffect(() => {
+    const keys = pendingSuiteKeysRef.current
+    if (!keys || keys.length === 0) return
+    const allPresent = keys.every((k) => commonDataKeys.includes(k))
+    if (allPresent) {
+      setDataKeySections([...keys, null])
+      pendingSuiteKeysRef.current = null
+    }
   }, [commonDataKeys])
 
   // Build a global metric union (across all files in manifest) to power the filter manager
@@ -497,6 +591,45 @@ function App() {
           )}
         </div>
 
+        {/* Save/Load Comparison Suites */}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
+          <Button
+            type="primary"
+            onClick={() => {
+              const defaultName = `Suite ${new Date().toLocaleString()}`
+              setSaveName(defaultName)
+              setSaveModalOpen(true)
+            }}
+            disabled={selected.size === 0}
+          >
+            Save comparison
+          </Button>
+          <Select
+            style={{ minWidth: 260 }}
+            placeholder="Open saved comparison"
+            options={savedSuites.map((s) => ({ label: s.name, value: s.id }))}
+            value={activeSuiteId}
+            onChange={(id) => {
+              setActiveSuiteId(id as string)
+              const s = savedSuites.find((x) => x.id === id)
+              if (s) loadSuite(s)
+            }}
+            allowClear
+            onClear={() => setActiveSuiteId(undefined)}
+          />
+          <Popconfirm
+            title="Delete selected comparison?"
+            onConfirm={() => {
+              if (!activeSuiteId) return
+              setSavedSuites((prev) => prev.filter((s) => s.id !== activeSuiteId))
+              setActiveSuiteId(undefined)
+              message.success('Deleted comparison')
+            }}
+          >
+            <Button danger disabled={!activeSuiteId}>Delete</Button>
+          </Popconfirm>
+        </div>
+
         {/* Sections: each has a selector and, if chosen, a table under it. */}
         {selected.size > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -667,6 +800,36 @@ function App() {
                 </Space>
               </Checkbox.Group>
             </div>
+          </div>
+        </Space>
+      </Modal>
+      {/* Save Comparison Modal */}
+      <Modal
+        open={saveModalOpen}
+        title="Save comparison"
+        onCancel={() => setSaveModalOpen(false)}
+        onOk={() => {
+          const name = saveName.trim()
+          if (!name) { message.error('Please provide a name'); return }
+          const suite = buildSuiteFromCurrent(name)
+          setSavedSuites((prev) => [...prev, suite])
+          setSaveModalOpen(false)
+          message.success(`Saved "${name}"`)
+        }}
+        okText="Save"
+      >
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <div>
+            <div style={{ marginBottom: 4 }}>Name</div>
+            <Input value={saveName} onChange={(e) => setSaveName(e.target.value)} placeholder="e.g. My comparison" />
+          </div>
+          <div style={{ color: '#666' }}>
+            This will save:
+            <ul style={{ margin: '4px 0 0 18px' }}>
+              <li>Selected datasets</li>
+              <li>Chosen data keys (tables)</li>
+              <li>Applied per-table filter and rows</li>
+            </ul>
           </div>
         </Space>
       </Modal>
