@@ -2,9 +2,9 @@ import { useEffect, useRef } from 'react'
 import * as d3 from 'd3'
 import type { Series } from '../types'
 
-type Props = { series: Series[]; width?: number; height?: number; isDark?: boolean }
+type Props = { series: Series[]; width?: number; height?: number; isDark?: boolean; exportRef?: (el: SVGSVGElement | null) => void }
 
-export default function LineChart({ series, width = 860, height = 320, isDark = false }: Props) {
+export default function LineChart({ series, width = 860, height = 320, isDark = false, exportRef }: Props) {
   const ref = useRef<SVGSVGElement | null>(null)
   useEffect(() => {
     const svg = d3.select(ref.current).style('color', isDark ? '#fff' : '#000')
@@ -102,5 +102,9 @@ export default function LineChart({ series, width = 860, height = 320, isDark = 
       tooltip.remove()
     }
   }, [series, width, height, isDark])
+  useEffect(() => {
+    exportRef?.(ref.current)
+    return () => exportRef?.(null)
+  }, [exportRef, ref.current])
   return <svg ref={ref} />
 }

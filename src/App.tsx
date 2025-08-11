@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Select, Spin, Table, Typography, Divider, FloatButton, Modal, Input, Space, Tag, Button, Checkbox, Popconfirm, message, Tooltip, Tabs, Collapse } from 'antd'
-import { UpOutlined, InfoCircleOutlined, RightOutlined } from '@ant-design/icons'
+import { Alert, Select, Spin, Table, Typography, Divider, FloatButton, Modal, Input, Space, Tag, Button, Checkbox, Popconfirm, message, Tooltip, Tabs, Collapse, Dropdown } from 'antd'
+import { UpOutlined, InfoCircleOutlined, RightOutlined, DownloadOutlined } from '@ant-design/icons'
 import './App.css'
 import './table-theme.css'
 import HeaderTitle from './components/HeaderTitle'
@@ -20,6 +20,7 @@ function App() {
   // Dynamic list of data-key sections; start with one empty (null)
   const [dataKeySections, setDataKeySections] = useState<(string | null)[]>([null])
   const selectionRef = useRef<HTMLDivElement | null>(null)
+  const diagramSvgRefs = useRef<Record<number, SVGSVGElement | null>>({})
   // Saved reusable filters (initialize from localStorage to avoid first-render overwrite)
   const [savedFilters, setSavedFilters] = useState<SavedFilter[]>(() => {
     try {
@@ -479,6 +480,219 @@ function App() {
     })
     return series
   }
+
+  function sanitizeFilename(name: string) {
+    return name.replace(/[^a-z0-9_-]+/gi, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '')
+  }
+
+  function downloadDiagram(idx: number, spec: { key: string; metricBase: string }, series: Series[], chartW: number, chartH: number) {
+    const src = diagramSvgRefs.current[idx]
+    if (!src) { message.error('Chart not ready to export'); return }
+    const NS = 'http://www.w3.org/2000/svg'
+    const titleText = `Showing ${spec.metricBase} across k for data key ${spec.key}`
+    const margin = 16
+    const titleFontSize = 14
+    const titleHeight = titleFontSize + 8
+    const legendItemH = 18
+    const legendPadL = 16
+    const legendW = 220
+    const legendH = Math.max(legendItemH * series.length, chartH)
+    const totalW = margin + chartW + legendPadL + legendW + margin
+    const totalH = margin + titleHeight + legendH + margin
+
+    const outSvg = document.createElementNS(NS, 'svg')
+    outSvg.setAttribute('xmlns', NS)
+    outSvg.setAttribute('width', String(totalW))
+    outSvg.setAttribute('height', String(totalH))
+
+    // Background to preserve dark mode visibility
+    const bg = document.createElementNS(NS, 'rect')
+    bg.setAttribute('x', '0')
+    bg.setAttribute('y', '0')
+    bg.setAttribute('width', String(totalW))
+    bg.setAttribute('height', String(totalH))
+    bg.setAttribute('fill', isDark ? '#111' : '#ffffff')
+    outSvg.appendChild(bg)
+
+    // Title
+    const title = document.createElementNS(NS, 'text')
+    title.setAttribute('x', String(margin))
+    title.setAttribute('y', String(margin + titleFontSize))
+    title.setAttribute('font-size', String(titleFontSize))
+    title.setAttribute('font-family', 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif')
+    title.setAttribute('fill', isDark ? '#ddd' : '#333')
+    title.textContent = titleText
+    outSvg.appendChild(title)
+
+    // Chart clone
+    const chartGroup = document.createElementNS(NS, 'g')
+    chartGroup.setAttribute('transform', `translate(${margin}, ${margin + titleHeight})`)
+    const cloned = src.cloneNode(true) as SVGSVGElement
+    // Ensure cloned SVG has no extra size that interferes; we use its content
+    cloned.removeAttribute('width')
+    cloned.removeAttribute('height')
+    // Move all children of cloned into a group to avoid nested svg
+    const wrap = document.createElementNS(NS, 'g')
+    while (cloned.firstChild) wrap.appendChild(cloned.firstChild)
+    chartGroup.appendChild(wrap)
+    outSvg.appendChild(chartGroup)
+
+    // Legend
+    const legendG = document.createElementNS(NS, 'g')
+    legendG.setAttribute('transform', `translate(${margin + chartW + legendPadL}, ${margin + titleHeight})`)
+    series.forEach((s, i) => {
+      const y = 2 + i * legendItemH
+      const dot = document.createElementNS(NS, 'rect')
+      dot.setAttribute('x', '0')
+      dot.setAttribute('y', String(y - 9))
+      dot.setAttribute('width', '12')
+      dot.setAttribute('height', '12')
+      dot.setAttribute('rx', '6')
+      dot.setAttribute('ry', '6')
+      dot.setAttribute('fill', s.color)
+      legendG.appendChild(dot)
+      const name = document.createElementNS(NS, 'text')
+      name.setAttribute('x', '18')
+      name.setAttribute('y', String(y))
+      name.setAttribute('font-size', '12')
+      name.setAttribute('font-family', 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif')
+      name.setAttribute('fill', isDark ? '#ddd' : '#333')
+      name.textContent = s.name
+      legendG.appendChild(name)
+    })
+    outSvg.appendChild(legendG)
+
+    const xml = new XMLSerializer().serializeToString(outSvg)
+    const blob = new Blob([xml], { type: 'image/svg+xml;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const compName = (activeSuiteId && savedSuites.find((x) => x.id === activeSuiteId)?.name) || 'comparison'
+    const file = sanitizeFilename(`${compName}_${spec.key}_${spec.metricBase}.svg`)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = file
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  function downloadDiagramPng(idx: number, spec: { key: string; metricBase: string }, series: Series[], chartW: number, chartH: number, useDarkBg: boolean) {
+    const src = diagramSvgRefs.current[idx]
+    if (!src) { message.error('Chart not ready to export'); return }
+    const NS = 'http://www.w3.org/2000/svg'
+    const titleText = `Showing ${spec.metricBase} across k for data key ${spec.key}`
+    const margin = 16
+    const titleFontSize = 14
+    const titleHeight = titleFontSize + 8
+    const legendItemH = 18
+    const legendPadL = 16
+    const legendW = 220
+    const legendH = Math.max(legendItemH * series.length, chartH)
+    const totalW = margin + chartW + legendPadL + legendW + margin
+    const totalH = margin + titleHeight + legendH + margin
+
+    const outSvg = document.createElementNS(NS, 'svg')
+    outSvg.setAttribute('xmlns', NS)
+    outSvg.setAttribute('width', String(totalW))
+    outSvg.setAttribute('height', String(totalH))
+
+    const bg = document.createElementNS(NS, 'rect')
+    bg.setAttribute('x', '0')
+    bg.setAttribute('y', '0')
+    bg.setAttribute('width', String(totalW))
+    bg.setAttribute('height', String(totalH))
+    bg.setAttribute('fill', useDarkBg ? '#111' : '#ffffff')
+    outSvg.appendChild(bg)
+
+    const title = document.createElementNS(NS, 'text')
+    title.setAttribute('x', String(margin))
+    title.setAttribute('y', String(margin + titleFontSize))
+    title.setAttribute('font-size', String(titleFontSize))
+    title.setAttribute('font-family', 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif')
+    title.setAttribute('fill', useDarkBg ? '#ddd' : '#333')
+    title.textContent = titleText
+    outSvg.appendChild(title)
+
+    const chartGroup = document.createElementNS(NS, 'g')
+    chartGroup.setAttribute('transform', `translate(${margin}, ${margin + titleHeight})`)
+    const cloned = src.cloneNode(true) as SVGSVGElement
+    cloned.removeAttribute('width')
+    cloned.removeAttribute('height')
+    const wrap = document.createElementNS(NS, 'g')
+    while (cloned.firstChild) wrap.appendChild(cloned.firstChild)
+    // Adjust axis text/lines color to match background choice
+    const axisText = wrap.querySelectorAll<SVGTextElement>('.tick text')
+    axisText.forEach((t) => t.setAttribute('fill', useDarkBg ? '#ddd' : '#333'))
+    const domainLines = wrap.querySelectorAll<SVGPathElement>('.domain')
+    domainLines.forEach((d) => {
+      d.setAttribute('stroke', useDarkBg ? '#ddd' : '#333')
+      d.style.opacity = '0.4'
+    })
+    const tickLines = wrap.querySelectorAll<SVGLineElement>('.tick line')
+    tickLines.forEach((l) => {
+      l.setAttribute('stroke', useDarkBg ? '#ddd' : '#333')
+      l.style.opacity = '0.2'
+    })
+    chartGroup.appendChild(wrap)
+    outSvg.appendChild(chartGroup)
+
+    const legendG = document.createElementNS(NS, 'g')
+    legendG.setAttribute('transform', `translate(${margin + chartW + legendPadL}, ${margin + titleHeight})`)
+    series.forEach((s, i) => {
+      const y = 2 + i * 18
+      const dot = document.createElementNS(NS, 'rect')
+      dot.setAttribute('x', '0')
+      dot.setAttribute('y', String(y - 9))
+      dot.setAttribute('width', '12')
+      dot.setAttribute('height', '12')
+      dot.setAttribute('rx', '6')
+      dot.setAttribute('ry', '6')
+      dot.setAttribute('fill', s.color)
+      legendG.appendChild(dot)
+      const name = document.createElementNS(NS, 'text')
+      name.setAttribute('x', '18')
+      name.setAttribute('y', String(y))
+      name.setAttribute('font-size', '12')
+      name.setAttribute('font-family', 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif')
+      name.setAttribute('fill', useDarkBg ? '#ddd' : '#333')
+      name.textContent = s.name
+      legendG.appendChild(name)
+    })
+    outSvg.appendChild(legendG)
+
+    const xml = new XMLSerializer().serializeToString(outSvg)
+    const svgUrl = URL.createObjectURL(new Blob([xml], { type: 'image/svg+xml;charset=utf-8' }))
+    const img = new Image()
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = totalW
+      canvas.height = totalH
+      const ctx = canvas.getContext('2d')
+      if (!ctx) { URL.revokeObjectURL(svgUrl); message.error('Canvas not supported'); return }
+      ctx.fillStyle = useDarkBg ? '#111' : '#ffffff'
+      ctx.fillRect(0, 0, totalW, totalH)
+      ctx.drawImage(img, 0, 0)
+      canvas.toBlob((blob) => {
+        if (!blob) { URL.revokeObjectURL(svgUrl); message.error('Failed to export PNG'); return }
+        const url = URL.createObjectURL(blob)
+        const compName = (activeSuiteId && savedSuites.find((x) => x.id === activeSuiteId)?.name) || 'comparison'
+        const file = sanitizeFilename(`${compName}_${spec.key}_${spec.metricBase}.png`)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = file
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        URL.revokeObjectURL(url)
+        URL.revokeObjectURL(svgUrl)
+      }, 'image/png')
+    }
+    img.onerror = () => {
+      URL.revokeObjectURL(svgUrl)
+      message.error('Failed to render PNG')
+    }
+    img.src = svgUrl
+  }
   // Build table data for a given data key
   function getTableConfig(key: string | null, sectionIndex?: number) {
     if (!key) return { columns: [], dataSource: [] as any[] }
@@ -926,11 +1140,35 @@ function App() {
                         const series = spec.key && spec.metricBase ? buildChartSeries(spec.key, spec.metricBase) : []
                         return (
                           <div key={`diagram-${idx}`} style={{ border: '1px solid #e5e5e5', borderRadius: 8, padding: 12, color: isDark ? '#fff' : '#000' }}>
-                            <div style={{ marginBottom: 8, fontWeight: 500 }}>
-                              {spec.key && spec.metricBase ? (
-                                <ChartInfo k={spec.key} metricBase={spec.metricBase} />
-                              ) : (
-                                <span>New diagram</span>
+                            <div style={{ marginBottom: 8, fontWeight: 500, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <div>
+                                {spec.key && spec.metricBase ? (
+                                  <ChartInfo k={spec.key} metricBase={spec.metricBase} />
+                                ) : (
+                                  <span>New diagram</span>
+                                )}
+                              </div>
+                              {spec.key && spec.metricBase && series.length > 0 && (
+                                <Dropdown
+                                  menu={{
+                                    items: [
+                                      { key: 'png-light', label: 'PNG (Light bg)' },
+                                      { key: 'png-dark', label: 'PNG (Dark bg)' },
+                                      { key: 'svg', label: 'SVG' },
+                                    ],
+                                    onClick: ({ key }) => {
+                                      if (key === 'png-light') {
+                                        downloadDiagramPng(idx, { key: spec.key!, metricBase: spec.metricBase! }, series, 280, 200, false)
+                                      } else if (key === 'png-dark') {
+                                        downloadDiagramPng(idx, { key: spec.key!, metricBase: spec.metricBase! }, series, 280, 200, true)
+                                      } else if (key === 'svg') {
+                                        downloadDiagram(idx, { key: spec.key!, metricBase: spec.metricBase! }, series, 280, 200)
+                                      }
+                                    },
+                                  }}
+                                >
+                                  <Button size="small" icon={<DownloadOutlined />}>Download</Button>
+                                </Dropdown>
                               )}
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
@@ -988,7 +1226,7 @@ function App() {
                             {spec.key && spec.metricBase && series.length > 0 && (
                               <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12, alignItems: 'flex-start' }}>
                                 <div>
-                                  <LineChart series={series} width={280} height={200} isDark={isDark} />
+                                  <LineChart series={series} width={280} height={200} isDark={isDark} exportRef={(el: SVGSVGElement | null) => { diagramSvgRefs.current[idx] = el }} />
                                 </div>
                                 <div style={{ minWidth: 120 }}>
                                   <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
