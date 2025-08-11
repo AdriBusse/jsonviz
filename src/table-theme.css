@@ -1,0 +1,116 @@
+/* Dark/light theme adjustments for AntD Table */
+.themedTable.dark {
+  /* Override AntD v5 CSS variables */
+  --ant-table-header-bg: transparent !important;
+  --ant-table-header-color: #fff !important;
+  --ant-table-bg: transparent !important;
+  --ant-table-color: #fff !important;
+  --ant-table-row-hover-bg: rgba(255,255,255,0.06) !important;
+}
+.themedTable.dark .ant-table,
+.themedTable.dark .ant-table-container,
+.themedTable.dark .ant-table-content,
+.themedTable.dark .ant-table-thead > tr > th,
+.themedTable.dark .ant-table-tbody > tr > td {
+  background: transparent !important;
+  color: #fff !important;
+}
+
+/* Title area above the table */
+.themedTable.dark .ant-table-title {
+  background: transparent !important;
+  color: #fff !important;
+  border-bottom: 1px solid rgba(255,255,255,0.16) !important;
+}
+
+/* Header (columns) and sticky header container */
+.themedTable.dark .ant-table-header,
+.themedTable.dark .ant-table-header table,
+.themedTable.dark .ant-table-thead,
+.themedTable.dark .ant-table-thead > tr,
+.themedTable.dark .ant-table-sticky-holder {
+  background: transparent !important;
+  color: #fff !important;
+}
+/* Ensure header cells have a subtle dark background */
+.themedTable.dark .ant-table-thead > tr > th,
+.themedTable.dark .ant-table-sticky-holder .ant-table-thead > tr > th,
+.themedTable.dark .ant-table-wrapper .ant-table-thead > tr > th,
+.themedTable.dark .ant-table .ant-table-thead > tr > th,
+.themedTable.dark .ant-table-sticky .ant-table-thead > tr > th,
+.themedTable.dark .ant-table-thead > tr > th.ant-table-cell {
+  background: rgba(255,255,255,0.06) !important;
+  color: #fff !important;
+}
+
+/* Extra specificity to beat default theme */
+.themedTable.dark .ant-table-wrapper .ant-table-thead > tr > th,
+.themedTable.dark .ant-table .ant-table-thead > tr > th,
+.themedTable.dark .ant-table-sticky .ant-table-thead > tr > th,
+.themedTable.dark .ant-table-thead > tr > th.ant-table-cell {
+  background: transparent !important;
+  color: #fff !important;
+}
+
+/* Fixed columns and sticky helpers */
+.themedTable.dark .ant-table-cell-fix-left,
+.themedTable.dark .ant-table-cell-fix-right,
+.themedTable.dark .ant-table-cell-scrollbar {
+  background: transparent !important;
+}
+
+/* Remove header divider pseudo element */
+.themedTable.dark .ant-table-thead > tr > th::before {
+  background: transparent !important;
+}
+
+.themedTable.dark .ant-table-thead > tr > th {
+  border-bottom-color: rgba(255,255,255,0.16) !important;
+}
+
+.themedTable.dark .ant-table-tbody > tr > td {
+  border-bottom-color: rgba(255,255,255,0.12) !important;
+}
+
+.themedTable.dark .ant-table-tbody > tr.ant-table-row:hover > td {
+  background: rgba(255,255,255,0.06) !important;
+}
+
+.themedTable.dark .ant-empty-description {
+  color: #aaa !important;
+}
+
+/* Some AntD wrappers/pseudo elements add white backgrounds; neutralize them in dark mode */
+.themedTable.dark .ant-table-thead .ant-table-cell {
+  background: transparent !important;
+  color: #fff !important;
+}
+.themedTable.dark .ant-table-container::before,
+.themedTable.dark .ant-table-container::after {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.themedTable.dark .ant-table-sticky-scroll,
+.themedTable.dark .ant-table-sticky-scroll-bar {
+  background: transparent !important;
+}
+
+/* Light mode keeps AntD defaults, but ensure transparency to blend with page background */
+.themedTable.light .ant-table,
+.themedTable.light .ant-table-container,
+.themedTable.light .ant-table-content,
+.themedTable.light .ant-table-thead > tr > th,
+.themedTable.light .ant-table-tbody > tr > td {
+  background: transparent !important;
+  color: #000;
+}
+
+/* Inline code in cells/headers */
+.themedTable.dark code {
+  background: rgba(255,255,255,0.08);
+  color: #fff;
+}
+.themedTable.light code {
+  background: rgba(0,0,0,0.04);
+  color: #000;
+}

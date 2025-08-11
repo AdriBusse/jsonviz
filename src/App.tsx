@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Select, Spin, Table, Typography, Divider, FloatButton, Modal, Input, Space, Tag, Button, Checkbox, Popconfirm, message, Tooltip, Tabs, Collapse } from 'antd'
 import { UpOutlined, InfoCircleOutlined, RightOutlined } from '@ant-design/icons'
 import './App.css'
+import './table-theme.css'
 import * as d3 from 'd3'
 
 type Manifest = {
@@ -749,7 +750,7 @@ function App() {
             <code>{m}</code>
             {desc && (
               <Tooltip title={desc}>
-                <InfoCircleOutlined style={{ marginLeft: 6, color: '#999' }} />
+                <InfoCircleOutlined style={{ marginLeft: 6, color: isDark ? '#bbb' : '#999' }} />
               </Tooltip>
             )}
           </span>
@@ -764,7 +765,7 @@ function App() {
           key: p,
           render: (v: any) => {
             if (!f) return <Spin size="small" />
-            if (!f.valid) return <span style={{ color: '#999' }}>invalid</span>
+            if (!f.valid) return <span style={{ color: isDark ? '#aaa' : '#999' }}>invalid</span>
             return v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : numFmt(v)
           },
           align: 'right' as const,
@@ -778,6 +779,11 @@ function App() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: 16 }}>
+      <div>
+        <Typography.Title level={2} style={{ margin: 0, color: isDark ? '#bbb' : '#444' }}>
+          Benchmark JSON Visualizer
+        </Typography.Title>
+      </div>
       <section>
         <div ref={selectionRef} id="selection-anchor" />
         <Collapse
@@ -894,56 +900,15 @@ function App() {
 
         <Divider style={{ margin: '8px 0 12px' }} />
 
-        {/* Row Filters Manager */}
-        <div style={{ border: '1px dashed #bbb', borderRadius: 8, padding: 12, marginBottom: 12 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <strong>Row Filters</strong>
-            <Button size="small" type="primary" onClick={() => { setEditingFilter({ id: '', name: '', rows: [] }); setEditingName(''); setEditingRows([]); setFilterSearch(''); setFilterModalOpen(true) }}>Add filter</Button>
-            </div>
-          {savedFilters.length === 0 ? (
-            <div style={{ color: '#777', marginTop: 8 }}>No saved filters yet.</div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
-              {savedFilters.map((f) => (
-                <div key={f.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #eee', borderRadius: 6, padding: '6px 8px' }}>
-                  <div>
-                    <div style={{ fontWeight: 600 }}>{f.name}</div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
-                      {f.rows.map((p, i) => {
-                        const desc = getMetricDescription(p)
-                        return (
-                          <Tag key={i}>
-                            <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-                              {p}
-                              {desc && (
-                                <Tooltip title={desc}>
-                                  <InfoCircleOutlined style={{ marginLeft: 6, color: '#999' }} />
-                                </Tooltip>
-                              )}
-                            </span>
-                          </Tag>
-                        )
-                      })}
-                    </div>
-                  </div>
-                  <Space>
-                    <Button size="small" onClick={() => { setEditingFilter(f); setEditingName(f.name); setEditingRows(f.rows); setFilterSearch(''); setFilterModalOpen(true) }}>Edit</Button>
-                    <Popconfirm title="Delete filter?" onConfirm={() => setSavedFilters((prev) => prev.filter((x) => x.id !== f.id))}>
-                      <Button size="small" danger>Delete</Button>
-                    </Popconfirm>
-                  </Space>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        
 
         {/* Save/Load Comparison Suites */}
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
           <Button
             type="primary"
             onClick={() => {
-              const defaultName = `Suite ${new Date().toLocaleString()}`
+              const current = activeSuiteId ? savedSuites.find((x) => x.id === activeSuiteId) : undefined
+              const defaultName = current?.name || `Suite ${new Date().toLocaleString()}`
               setSaveName(defaultName)
               setSaveModalOpen(true)
             }}
@@ -985,15 +950,67 @@ function App() {
               label: <span style={{ color: isDark ? '#fff' : '#000' }}>Tables</span>,
               children: (
                 <>
+                  {/* Row Filters Manager */}
+                  <div style={{ border: '1px dashed #bbb', borderRadius: 8, padding: 12, marginBottom: 12 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <strong>Row Filters</strong>
+                        <Button size="small" type="primary" onClick={() => { setEditingFilter({ id: '', name: '', rows: [] }); setEditingName(''); setEditingRows([]); setFilterSearch(''); setFilterModalOpen(true) }}>Add filter</Button>
+                      </div>
+                    {savedFilters.length === 0 ? (
+                      <div style={{ color: '#777', marginTop: 8 }}>No saved filters yet.</div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
+                        {savedFilters.map((f) => (
+                          <div key={f.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #eee', borderRadius: 6, padding: '6px 8px' }}>
+                            <div>
+                              <div style={{ fontWeight: 600 }}>{f.name}</div>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+                                {f.rows.map((p, i) => {
+                                  const desc = getMetricDescription(p)
+                                  return (
+                                    <Tag key={i}>
+                                      <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                                        {p}
+                                        {desc && (
+                                          <Tooltip title={desc}>
+                                            <InfoCircleOutlined style={{ marginLeft: 6, color: '#999' }} />
+                                          </Tooltip>
+                                        )}
+                                      </span>
+                                    </Tag>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                            <Space>
+                              <Button size="small" onClick={() => { setEditingFilter(f); setEditingName(f.name); setEditingRows(f.rows); setFilterSearch(''); setFilterModalOpen(true) }}>Edit</Button>
+                              <Popconfirm title="Delete filter?" onConfirm={() => setSavedFilters((prev) => prev.filter((x) => x.id !== f.id))}>
+                                <Button size="small" danger>Delete</Button>
+                              </Popconfirm>
+                            </Space>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                   {/* Sections: each has a selector and, if chosen, a table under it. */}
                   {selected.size > 0 && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                       {dataKeySections.map((key, idx) => {
                         const isPlaceholder = key == null
                         return (
-                          <div key={`section-${idx}`} style={{ border: '1px solid #e5e5e5', borderRadius: 8, padding: 12 }}>
+                          <div
+                            key={`section-${idx}`}
+                            style={{
+                              border: `1px solid ${isDark ? 'rgba(255,255,255,0.2)' : '#e5e5e5'}`,
+                              borderRadius: 8,
+                              padding: 12,
+                              color: isDark ? '#fff' : '#000',
+                            }}
+                          >
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                              <span style={{ color: '#666', minWidth: 90 }}>{isPlaceholder ? 'New data key:' : 'Data key:'}</span>
+                              <span style={{ color: isDark ? '#aaa' : '#666', minWidth: 90 }}>{isPlaceholder ? 'New data key:' : 'Data key:'}</span>
                               <Select
                                 style={{ minWidth: 260 }}
                                 placeholder={commonDataKeys.length ? 'Select data key' : 'No common data keys'}
@@ -1059,7 +1076,7 @@ function App() {
                                                           {m}
                                                           {desc && (
                                                             <Tooltip title={desc}>
-                                                              <InfoCircleOutlined style={{ marginLeft: 6, color: '#999' }} />
+                                                              <InfoCircleOutlined style={{ marginLeft: 6, color: isDark ? '#bbb' : '#999' }} />
                                                             </Tooltip>
                                                           )}
                                                         </span>
@@ -1088,10 +1105,11 @@ function App() {
                             {key && (
                               <div style={{ overflowX: 'auto' }}>
                                 <Table
+                                  className={`themedTable ${isDark ? 'dark' : 'light'}`}
                                   size="small"
                                   sticky
                                   title={() => (
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: isDark ? '#fff' : '#000' }}>
                                       <div>
                                       Showing data key: <code>{key}</code>{' '}
                                       {((sectionFilters[idx] ? 1 : 0) > 0 || (sectionRows[idx] ?? []).length > 0) && (
@@ -1103,7 +1121,7 @@ function App() {
                                       </div>
                                       <a
                                         onClick={() => selectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-                                        style={{ fontSize: 12 }}
+                                        style={{ fontSize: 12, color: isDark ? '#91caff' : '#1677ff' }}
                                       >
                                         Back to selection
                                       </a>
@@ -1299,16 +1317,42 @@ function App() {
       <Modal
         open={saveModalOpen}
         title="Save comparison"
-        onCancel={() => setSaveModalOpen(false)}
-        onOk={() => {
-          const name = saveName.trim()
-          if (!name) { message.error('Please provide a name'); return }
-          const suite = buildSuiteFromCurrent(name)
-          setSavedSuites((prev) => [...prev, suite])
-          setSaveModalOpen(false)
-          message.success(`Saved "${name}"`)
-        }}
-        okText="Save"
+        footer={[
+          <Button key="cancel" onClick={() => setSaveModalOpen(false)}>Cancel</Button>,
+          <Button
+            key="saveNew"
+            type="primary"
+            onClick={() => {
+              const name = saveName.trim()
+              if (!name) { message.error('Please provide a name'); return }
+              const suite = buildSuiteFromCurrent(name)
+              setSavedSuites((prev) => [...prev, suite])
+              setActiveSuiteId(suite.id)
+              setSaveModalOpen(false)
+              message.success(`Saved new comparison "${name}"`)
+            }}
+          >
+            Save as new
+          </Button>,
+          activeSuiteId && savedSuites.find((s) => s.id === activeSuiteId) ? (
+            <Button
+              key="overwrite"
+              danger
+              onClick={() => {
+                const name = saveName.trim()
+                if (!name) { message.error('Please provide a name'); return }
+                const current = savedSuites.find((s) => s.id === activeSuiteId)
+                if (!current) { message.error('No active comparison selected'); return }
+                const updated = buildSuiteFromCurrent(name)
+                setSavedSuites((prev) => prev.map((s) => s.id === activeSuiteId ? { ...updated, id: current.id, createdAt: current.createdAt } : s))
+                setSaveModalOpen(false)
+                message.success(`Overwrote "${name}"`)
+              }}
+            >
+              Overwrite current
+            </Button>
+          ) : null,
+        ]}
       >
         <Space direction="vertical" style={{ width: '100%' }}>
           <div>
