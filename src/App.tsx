@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Select, Spin, Table, Typography, Divider, FloatButton, Modal, Input, Space, Tag, Button, Checkbox, Popconfirm, message, Tooltip } from 'antd'
-import { UpOutlined, InfoCircleOutlined } from '@ant-design/icons'
+import { Alert, Select, Spin, Table, Typography, Divider, FloatButton, Modal, Input, Space, Tag, Button, Checkbox, Popconfirm, message, Tooltip, Tabs, Collapse } from 'antd'
+import { UpOutlined, InfoCircleOutlined, RightOutlined } from '@ant-design/icons'
 import './App.css'
 import * as d3 from 'd3'
 
@@ -32,6 +32,7 @@ type SavedSuite = {
   dataKeySections: string[]
   sectionFilters: Record<number, string | null>
   sectionRows: Record<number, string[]>
+  diagramSections?: { key: string; metricBase: string }[]
 }
 
 function App() {
@@ -74,6 +75,8 @@ function App() {
   const [saveName, setSaveName] = useState('')
   // When loading a suite, defer applying dataKeySections until keys are available
   const pendingSuiteKeysRef = useRef<string[] | null>(null)
+  // Defer applying diagram sections until keys and metric bases are available
+  const pendingSuiteDiagramsRef = useRef<{ key: string; metricBase: string }[] | null>(null)
   // Per-section applied filter ID (single) and explicit selected rows
   const [sectionFilters, setSectionFilters] = useState<Record<number, string | null>>({})
   const [sectionRows, setSectionRows] = useState<Record<number, string[]>>({})
@@ -83,6 +86,32 @@ function App() {
   const [editingName, setEditingName] = useState('')
   const [editingRows, setEditingRows] = useState<string[]>([])
   const [filterSearch, setFilterSearch] = useState('')
+
+  // Track system dark mode to adjust colors for charts and labels
+  const [isDark, setIsDark] = useState<boolean>(() =>
+    typeof window !== 'undefined' && 'matchMedia' in window
+      ? window.matchMedia('(prefers-color-scheme: dark)').matches
+      : false
+  )
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('matchMedia' in window)) return
+    const mql = window.matchMedia('(prefers-color-scheme: dark)')
+    const handler = (e: MediaQueryListEvent) => setIsDark(e.matches)
+    if ('addEventListener' in mql) {
+      mql.addEventListener('change', handler)
+    } else {
+      // @ts-ignore legacy Safari
+      mql.addListener(handler)
+    }
+    return () => {
+      if ('removeEventListener' in mql) {
+        mql.removeEventListener('change', handler)
+      } else {
+        // @ts-ignore legacy Safari
+        mql.removeListener(handler)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     let mounted = true
@@ -194,6 +223,10 @@ function App() {
         compactRows[newIdx] = rows
       }
     })
+    const diagramsCompact = (diagramSections || [])
+      .filter((d) => d.key && d.metricBase)
+      .map((d) => ({ key: d.key as string, metricBase: d.metricBase as string }))
+
     return {
       id: Math.random().toString(36).slice(2, 9),
       name,
@@ -202,6 +235,7 @@ function App() {
       dataKeySections: keys,
       sectionFilters: compactFilters,
       sectionRows: compactRows,
+      diagramSections: diagramsCompact,
     }
   }
 
@@ -211,6 +245,11 @@ function App() {
     pendingSuiteKeysRef.current = suite.dataKeySections ?? []
     setSectionFilters(suite.sectionFilters ?? {})
     setSectionRows(suite.sectionRows ?? {})
+    // Defer applying diagrams until keys and metric bases are ready
+    const ds = (suite.diagramSections ?? []).filter((d) => d && d.key && d.metricBase) as { key: string; metricBase: string }[]
+    pendingSuiteDiagramsRef.current = ds
+    // show a clean placeholder until diagrams can be applied
+    setDiagramSections([{ key: null, metricBase: null }])
     setActiveSuiteId(suite.id)
     message.success(`Loaded "${suite.name}"`)
   }
@@ -224,6 +263,7 @@ function App() {
       setDataKeySections([null])
       setSectionFilters({})
       setSectionRows({})
+      setDiagramSections([{ key: null, metricBase: null }])
       return
     }
     const missing = sel.filter((p) => !filesCache[p])
@@ -281,6 +321,25 @@ function App() {
       const compact = mapped.filter((k, i) => !(k === null && i < mapped.length - 1))
       // 3) Ensure exactly one trailing null placeholder
       return compact[compact.length - 1] === null ? compact : [...compact, null]
+    })
+  }, [commonDataKeys, selected, filesCache])
+
+  // Keep diagram sections valid if keys/metrics become unavailable
+  useEffect(() => {
+    setDiagramSections((prev) => {
+      const adjusted = prev.map((d) => {
+        if (d.key && !commonDataKeys.includes(d.key)) return { key: null, metricBase: null }
+        if (d.key && d.metricBase) {
+          const bases = new Set(getAvailableMetricBasesForKey(d.key))
+          if (!bases.has(d.metricBase)) return { key: d.key, metricBase: null }
+        }
+        return d
+      })
+      // remove intermediate empty placeholders; keep exactly one trailing placeholder
+      const compact = adjusted.filter((d, i) => !(d.key == null && d.metricBase == null && i < adjusted.length - 1))
+      return compact.length && compact[compact.length - 1].key == null && compact[compact.length - 1].metricBase == null
+        ? compact
+        : [...compact, { key: null, metricBase: null }]
     })
   }, [commonDataKeys])
 
@@ -465,9 +524,9 @@ function App() {
     return out
   }
 
-  // ----- Visual Comparison (D3 Line Chart) -----
-  const [chartKey, setChartKey] = useState<string | null>(null)
-  const [chartMetricBase, setChartMetricBase] = useState<string | null>(null)
+  // ----- Visual Comparison (D3 Line Charts) -----
+  type DiagramSpec = { key: string | null; metricBase: string | null }
+  const [diagramSections, setDiagramSections] = useState<DiagramSpec[]>([{ key: null, metricBase: null }])
 
   // Metric parsing helpers for charting
   function parseMetricName(name: string): { base: string; k: number | null } {
@@ -488,14 +547,26 @@ function App() {
     return Array.from(bases).sort()
   }
 
-  const chartMetricBases = useMemo(() => {
-    return chartKey ? getAvailableMetricBasesForKey(chartKey) : []
-  }, [chartKey, selected, filesCache])
+  // Apply pending suite diagrams once keys and metric bases are ready (placed after helper declaration)
+  useEffect(() => {
+    const ds = pendingSuiteDiagramsRef.current
+    if (!ds || ds.length === 0) return
+    // Ensure all keys are present
+    const keysReady = ds.every((d) => commonDataKeys.includes(d.key))
+    if (!keysReady) return
+    // Ensure metric bases for each key are available
+    const basesReady = ds.every((d) => {
+      const bases = new Set(getAvailableMetricBasesForKey(d.key))
+      return bases.has(d.metricBase)
+    })
+    if (!basesReady) return
+    setDiagramSections([...ds.map((d) => ({ key: d.key, metricBase: d.metricBase })), { key: null, metricBase: null }])
+    pendingSuiteDiagramsRef.current = null
+  }, [commonDataKeys, selected, filesCache])
 
   type Series = { name: string; color: string; points: { k: number; value: number }[] }
 
-  const chartSeries: Series[] = useMemo(() => {
-    if (!chartKey || !chartMetricBase) return []
+  function buildChartSeries(key: string, metricBase: string): Series[] {
     const sel = Array.from(selected)
     const validFiles = sel
       .map((p) => filesCache[p])
@@ -503,11 +574,11 @@ function App() {
     const palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
     const series: Series[] = []
     validFiles.forEach((f, idx) => {
-      const map = buildMetricMap(chartKey, f.data?.[chartKey])
+      const map = buildMetricMap(key, f.data?.[key])
       const points: { k: number; value: number }[] = []
       for (const [metricName, v] of Object.entries(map)) {
         const { base, k } = parseMetricName(metricName)
-        if (base === chartMetricBase && k != null) {
+        if (base === metricBase && k != null) {
           const num = typeof v === 'number' ? v : Number(v)
           if (Number.isFinite(num)) points.push({ k, value: num })
         }
@@ -516,15 +587,13 @@ function App() {
       if (points.length > 0) series.push({ name: f.name || f.path, color: palette[idx % palette.length], points })
     })
     return series
-  }, [chartKey, chartMetricBase, selected, filesCache])
+  }
 
-  const ChartInfo: React.FC = () => {
-    if (!chartKey || !chartMetricBase) return null
-    const metricLabel = chartMetricBase
-    const desc = getMetricDescription(`${metricLabel}@k`)
+  const ChartInfo: React.FC<{ k: string; metricBase: string }> = ({ k, metricBase }) => {
+    const desc = getMetricDescription(`${metricBase}@k`)
     return (
-      <span style={{ color: '#666' }}>
-        Showing <code>{metricLabel}</code> across k for data key <code>{chartKey}</code>
+      <span>
+        Showing <code>{metricBase}</code> across k for data key <code>{k}</code>
         {desc && (
           <Tooltip title={desc}>
             <InfoCircleOutlined style={{ marginLeft: 6 }} />
@@ -534,10 +603,11 @@ function App() {
     )
   }
 
-  function LineChart({ series, width = 860, height = 320 }: { series: Series[]; width?: number; height?: number }) {
+  function LineChart({ series, width = 860, height = 320, isDark = false }: { series: Series[]; width?: number; height?: number; isDark?: boolean }) {
     const ref = useRef<SVGSVGElement | null>(null)
     useEffect(() => {
       const svg = d3.select(ref.current)
+        .style('color', isDark ? '#fff' : '#000')
       svg.selectAll('*').remove()
       if (!series || series.length === 0) return
       const margin = { top: 16, right: 24, bottom: 40, left: 56 }
@@ -561,11 +631,34 @@ function App() {
       g.append('g').attr('transform', `translate(0,${innerH})`).call(xAxis as any)
       g.append('g').call(yAxis as any)
 
+      // Improve dark-mode readability by aligning axis colors with surrounding text color
+      const hostColor = getComputedStyle(svg.node() as SVGSVGElement).color || '#ccc'
+      g.selectAll('.tick text').attr('fill', hostColor)
+      g.selectAll('.domain').attr('stroke', hostColor).style('opacity', 0.4)
+      g.selectAll('.tick line').attr('stroke', hostColor).style('opacity', 0.2)
+
       const lineGen = d3
         .line<{ k: number; value: number }>()
         .x((d: { k: number; value: number }) => x(d.k))
         .y((d: { k: number; value: number }) => y(d.value))
         .curve(d3.curveMonotoneX)
+
+      // HTML tooltip for hover feedback
+      const tooltip = d3
+        .select('body')
+        .append('div')
+        .attr('class', 'jsonviz-chart-tooltip')
+        .style('position', 'fixed')
+        .style('z-index', '9999')
+        .style('background', isDark ? '#222' : '#fff')
+        .style('color', isDark ? '#fff' : '#000')
+        .style('padding', '6px 8px')
+        .style('border-radius', '4px')
+        .style('font-size', '12px')
+        .style('pointer-events', 'none')
+        .style('display', 'none')
+        .style('box-shadow', '0 2px 8px rgba(0,0,0,0.15)')
+        .style('border', isDark ? '1px solid rgba(255,255,255,0.12)' : '1px solid rgba(0,0,0,0.1)')
 
       for (const s of series) {
         g.append('path')
@@ -575,8 +668,8 @@ function App() {
           .attr('stroke-width', 2)
           .attr('d', lineGen as any)
 
-        g
-          .selectAll(`.pt-${s.name}`)
+        const circles = g
+          .selectAll(null)
           .data(s.points)
           .enter()
           .append('circle')
@@ -584,16 +677,36 @@ function App() {
           .attr('cy', (d: { k: number; value: number }) => y(d.value))
           .attr('r', 3)
           .attr('fill', s.color)
+          .style('cursor', 'pointer')
+
+        circles
+          .on('mouseover', (event: MouseEvent, d: { k: number; value: number }) => {
+            const el = event.currentTarget as SVGCircleElement
+            d3.select(el).attr('r', 5)
+            tooltip
+              .style('display', 'block')
+              .html(`<strong>${s.name}</strong><br/>k=${d.k}<br/>${Number(d.value).toFixed(5)}`)
+          })
+          .on('mousemove', (event: MouseEvent) => {
+            tooltip.style('left', event.clientX + 12 + 'px').style('top', event.clientY + 12 + 'px')
+          })
+          .on('mouseout', (event: MouseEvent) => {
+            const el = event.currentTarget as SVGCircleElement
+            d3.select(el).attr('r', 3)
+            tooltip.style('display', 'none')
+          })
+
+        circles
           .append('title')
-          .text((d: { k: number; value: number }) => `k=${d.k}, value=${d.value}`)
+          .text((d: { k: number; value: number }) => `${s.name}: k=${d.k}, value=${Number(d.value).toFixed(5)}`)
+
+        // ensure tooltip cleans up if the series updates
       }
 
-      const legend = g.append('g').attr('transform', `translate(0,${-8})`)
-      series.forEach((s, i) => {
-        const item = legend.append('g').attr('transform', `translate(${i * 200},0)`)
-        item.append('line').attr('x1', 0).attr('x2', 16).attr('y1', 0).attr('y2', 0).attr('stroke', s.color).attr('stroke-width', 3)
-        item.append('text').attr('x', 22).attr('y', 4).attr('fill', '#333').style('font-size', '12px').text(s.name)
-      })
+      // Legend is rendered in React on the right side of the chart
+      return () => {
+        tooltip.remove()
+      }
     }, [series, width, height])
     return <svg ref={ref} />
   }
@@ -646,7 +759,7 @@ function App() {
         const f = filesCache[p]
         const titleName = f?.name || p.split('/').pop()
         return {
-          title: titleName,
+          title: <span style={{ color: isDark ? '#fff' : '#000' }}>{titleName}</span>,
           dataIndex: p,
           key: p,
           render: (v: any) => {
@@ -667,117 +780,106 @@ function App() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: 16 }}>
       <section>
         <div ref={selectionRef} id="selection-anchor" />
-        <h1 style={{ marginBottom: 8 }}>JSON Visualizer — File Selection</h1>
-        <div style={{ fontSize: 13, color: '#666', marginBottom: 12 }}>
-          <span>
-            {totals.selected} selected / {totals.totalFiles} files
-          </span>
-          {manifest?.generatedAt && (
-            <span style={{ marginLeft: 12 }}>manifest: {new Date(manifest.generatedAt).toLocaleString()}</span>
-          )}
-        </div>
-
-        {/* Visual Comparison (Line Chart) */}
-        <div style={{ border: '1px solid #e5e5e5', borderRadius: 8, padding: 12, marginBottom: 12 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-            <strong style={{ marginRight: 8 }}>Visual Comparison</strong>
-            <span style={{ color: '#666' }}>(compare methods across k)</span>
-          </div>
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
-            <Select
-              style={{ minWidth: 240 }}
-              placeholder="Select data key"
-              options={commonDataKeys.map((k) => ({ label: k, value: k }))}
-              value={chartKey ?? undefined}
-              onChange={(v) => { setChartKey(v); setChartMetricBase(null) }}
-              allowClear
+        <Collapse
+          bordered
+          defaultActiveKey={[]}
+          style={{ background: 'transparent' }}
+          className="fileCollapse"
+          expandIcon={({ isActive }) => (
+            <RightOutlined
+              style={{
+                color: isDark ? '#fff' : '#000',
+                transform: isActive ? 'rotate(90deg)' : 'rotate(0deg)',
+                transition: 'transform 0.2s ease'
+              }}
             />
-            <Select
-              style={{ minWidth: 240 }}
-              placeholder="Select metric"
-              options={chartMetricBases.map((b: string) => ({ label: b.toUpperCase(), value: b }))}
-              value={chartMetricBase ?? undefined}
-              onChange={(v) => setChartMetricBase(v)}
-              disabled={!chartKey}
-              allowClear
-            />
-            <ChartInfo />
-          </div>
-          {selected.size === 0 && <div style={{ color: '#888' }}>Select one or more files above to compare.</div>}
-          {chartKey && chartMetricBase && chartSeries.length === 0 && (
-            <div style={{ color: '#888' }}>No data for {chartMetricBase.toUpperCase()}@k under <code>{chartKey}</code> in selected files.</div>
           )}
-          {chartKey && chartMetricBase && chartSeries.length > 0 && (
-            <div style={{ overflowX: 'auto' }}>
-              <LineChart series={chartSeries} />
-            </div>
-          )}
-        </div>
+        >
+          <Collapse.Panel
+            key="files"
+            style={{ background: 'transparent' }}
+            header={
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: isDark ? '#fff' : '#000' }}>
+                <span style={{ fontWeight: 600 }}>JSON Visualizer — File Selection</span>
+                <span style={{ fontSize: 12, opacity: 0.85 }}>
+                  {totals.selected} selected / {totals.totalFiles} files
+                  {manifest?.generatedAt && (
+                    <span style={{ marginLeft: 12 }}>manifest: {new Date(manifest.generatedAt).toLocaleString()}</span>
+                  )}
+                </span>
+              </div>
+            }
+          >
+            {loading && <div>Loading manifest…</div>}
+            {error && (
+              <div style={{ color: 'crimson' }}>
+                Failed to load manifest: {error}. Make sure your JSON folders are under `public/results/` and run `npm run gen:manifest`.
+              </div>
+            )}
 
-        {loading && <div>Loading manifest…</div>}
-        {error && (
-          <div style={{ color: 'crimson' }}>
-            Failed to load manifest: {error}. Make sure your JSON folders are under `public/results/` and run `npm run gen:manifest`.
-          </div>
-        )}
+            {!loading && !error && manifest && manifest.folders.length === 0 && (
+              <div style={{ color: '#555' }}>
+                No folders found in <code>public/results/</code>. Add date folders with JSON files and rerun <code>npm run gen:manifest</code>.
+              </div>
+            )}
 
-        {!loading && !error && manifest && manifest.folders.length === 0 && (
-          <div style={{ color: '#555' }}>
-            No folders found in <code>public/results/</code>. Add date folders with JSON files and rerun <code>npm run gen:manifest</code>.
-          </div>
-        )}
-
-        {!loading && !error && manifest && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {manifest.folders.map((folder) => (
-              <div key={folder.name} style={{ border: '1px solid #e3e3e3', borderRadius: 8, padding: 12 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <input
-                      type="checkbox"
-                      checked={isFolderFullySelected(folder.name)}
-                      ref={(el) => {
-                        if (el) el.indeterminate = isFolderPartiallySelected(folder.name)
-                      }}
-                      onChange={(e) => toggleFolder(folder.name, e.currentTarget.checked)}
-                      aria-checked={
-                        isFolderPartiallySelected(folder.name)
-                          ? 'mixed'
-                          : isFolderFullySelected(folder.name)
-                          ? 'true'
-                          : 'false'
-                      }
-                    />
-                    <strong>{folder.name}</strong>
-                  </div>
-                  <small style={{ color: '#666' }}>{folder.files.length} files</small>
-                </div>
-
-                {folder.files.length > 0 && (
-                  <ul style={{ marginTop: 8, listStyle: 'none', padding: 0, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-                    {folder.files.map((file) => (
-                      <li key={file.path} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {!loading && !error && manifest && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                {manifest.folders.map((folder) => (
+                  <div key={folder.name} style={{ border: '1px solid #e3e3e3', borderRadius: 8, padding: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <input
                           type="checkbox"
-                          checked={selected.has(file.path)}
-                          onChange={(e) => toggleFile(file.path, e.currentTarget.checked)}
+                          checked={isFolderFullySelected(folder.name)}
+                          ref={(el) => {
+                            if (el) el.indeterminate = isFolderPartiallySelected(folder.name)
+                          }}
+                          onChange={(e) => toggleFolder(folder.name, e.currentTarget.checked)}
+                          aria-checked={
+                            isFolderPartiallySelected(folder.name)
+                              ? 'mixed'
+                              : isFolderFullySelected(folder.name)
+                              ? 'true'
+                              : 'false'
+                          }
                         />
-                        <code title={file.path} style={{ fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {file.name}
-                        </code>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                        <strong style={{ color: isDark ? '#fff' : '#000' }}>{folder.name}</strong>
+                      </div>
+                      <small style={{ color: isDark ? '#aaa' : '#666' }}>{folder.files.length} files</small>
+                    </div>
+
+                    {folder.files.length > 0 && (
+                      <ul style={{ marginTop: 8, listStyle: 'none', padding: 0, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                        {folder.files.map((file) => (
+                          <li key={file.path} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <input
+                              type="checkbox"
+                              checked={selected.has(file.path)}
+                              onChange={(e) => toggleFile(file.path, e.currentTarget.checked)}
+                            />
+                            <code
+                              title={file.path}
+                              style={{ fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: isDark ? '#fff' : '#000' }}
+                            >
+                              {file.name}
+                            </code>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        )}
+            )}
+          </Collapse.Panel>
+        </Collapse>
       </section>
 
       <section>
         <h2 style={{ marginBottom: 8 }}>Preview & Compare</h2>
         {filesError && <Alert type="error" message={`Failed loading files: ${filesError}`} showIcon style={{ marginBottom: 12 }} />}
+        {/* ... */}
         {filesLoading && (
           <div style={{ marginBottom: 12 }}>
             <Spin /> <span style={{ marginLeft: 8 }}>Loading selected files…</span>
@@ -875,144 +977,265 @@ function App() {
           </Popconfirm>
         </div>
 
-        {/* Sections: each has a selector and, if chosen, a table under it. */}
-        {selected.size > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {dataKeySections.map((key, idx) => {
-              const isPlaceholder = key == null
-              return (
-                <div key={`section-${idx}`} style={{ border: '1px solid #e5e5e5', borderRadius: 8, padding: 12 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                    <span style={{ color: '#666', minWidth: 90 }}>{isPlaceholder ? 'New data key:' : 'Data key:'}</span>
-                    <Select
-                      style={{ minWidth: 260 }}
-                      placeholder={commonDataKeys.length ? 'Select data key' : 'No common data keys'}
-                      options={commonDataKeys.map((k) => ({ label: k, value: k }))}
-                      value={key ?? undefined}
-                      onChange={(val) => {
-                        setDataKeySections((prev) => {
-                          const next = [...prev]
-                          next[idx] = val
-                          // If this was the last placeholder, append a new one
-                          if (idx === prev.length - 1 && val) next.push(null)
-                          return next
-                        })
-                      }}
-                      allowClear
-                      onClear={() => {
-                        setDataKeySections((prev) => {
-                          const next = [...prev]
-                          next[idx] = null
-                          return next
-                        })
-                      }}
-                    />
-                    {!isPlaceholder && key && (
-                      <>
-                        <Select
-                          style={{ minWidth: 240 }}
-                          placeholder="Apply saved filter"
-                          options={savedFilters.map((sf) => ({ label: sf.name, value: sf.id }))}
-                          value={sectionFilters[idx] ?? undefined}
-                          onChange={(val) => setSectionFilters((prev) => ({ ...prev, [idx]: (val as string) || null }))}
-                          allowClear
-                        />
-                        <Button
-                          onClick={() => {
-                            const allMetrics = getMetricList(key)
-                            const current = new Set(sectionRows[idx] ?? [])
-                            let tempSelected = new Set(current)
-                            let search = ''
-                            const MetricSelector = () => {
-                              const [query, setQuery] = useState(search)
-                              const [checked, setChecked] = useState<string[]>(Array.from(tempSelected))
-                              const filtered = allMetrics.filter((m) => m.toLowerCase().includes(query.toLowerCase()))
-                              return (
-                                <div>
-                                  <Input placeholder="Search rows" value={query} onChange={(e) => setQuery(e.target.value)} style={{ marginBottom: 8 }} />
-                                  <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                                    <Button size="small" onClick={() => setChecked(filtered)}>Select visible</Button>
-                                    <Button size="small" onClick={() => setChecked([])}>Clear</Button>
-                                    <Button size="small" onClick={() => setChecked(allMetrics)}>Select all</Button>
-                                  </div>
-                                  <div style={{ maxHeight: 360, overflow: 'auto', border: '1px solid #eee', borderRadius: 4, padding: 8 }}>
-                                    <Checkbox.Group
-                                      style={{ width: '100%' }}
-                                      value={checked}
-                                      onChange={(vals) => setChecked(vals as string[])}
-                                    >
-                                      <Space direction="vertical" style={{ width: '100%' }}>
-                                        {filtered.map((m) => {
-                                          const desc = getMetricDescription(m)
-                                          return (
-                                            <Checkbox key={m} value={m}>
-                                              <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-                                                {m}
-                                                {desc && (
-                                                  <Tooltip title={desc}>
-                                                    <InfoCircleOutlined style={{ marginLeft: 6, color: '#999' }} />
-                                                  </Tooltip>
-                                                )}
-                                              </span>
-                                            </Checkbox>
-                                          )
-                                        })}
-                                      </Space>
-                                    </Checkbox.Group>
-                                  </div>
-                                  <div style={{ marginTop: 8, textAlign: 'right' }}>
-                                    <Button type="primary" onClick={() => {
-                                      setSectionRows((prev) => ({ ...prev, [idx]: checked }))
-                                      Modal.destroyAll()
-                                      message.success(`Selected ${checked.length} row(s) for table ${idx + 1}`)
-                                    }}>Apply</Button>
-                                  </div>
-                                </div>
-                              )
-                            }
-                            Modal.info({ title: 'Select rows to display', content: <MetricSelector />, width: 640, icon: null })
-                          }}
-                        >Rows…</Button>
-                      </>
-                    )}
-                  </div>
-                  {key && (
-                    <div style={{ overflowX: 'auto' }}>
-                      <Table
-                        size="small"
-                        sticky
-                        title={() => (
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div>
-                            Showing data key: <code>{key}</code>{' '}
-                            {((sectionFilters[idx] ? 1 : 0) > 0 || (sectionRows[idx] ?? []).length > 0) && (
-                              <span style={{ marginLeft: 8 }}>
-                                {sectionFilters[idx] && <Tag color="blue">filter: 1</Tag>}
-                                <Tag color="green">rows: {(sectionRows[idx] ?? []).length}</Tag>
-                              </span>
-                            )}
+        {/* Tabs: Tables and Diagrams */}
+        <Tabs
+          items={[
+            {
+              key: 'tables',
+              label: <span style={{ color: isDark ? '#fff' : '#000' }}>Tables</span>,
+              children: (
+                <>
+                  {/* Sections: each has a selector and, if chosen, a table under it. */}
+                  {selected.size > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                      {dataKeySections.map((key, idx) => {
+                        const isPlaceholder = key == null
+                        return (
+                          <div key={`section-${idx}`} style={{ border: '1px solid #e5e5e5', borderRadius: 8, padding: 12 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                              <span style={{ color: '#666', minWidth: 90 }}>{isPlaceholder ? 'New data key:' : 'Data key:'}</span>
+                              <Select
+                                style={{ minWidth: 260 }}
+                                placeholder={commonDataKeys.length ? 'Select data key' : 'No common data keys'}
+                                options={commonDataKeys.map((k) => ({ label: k, value: k }))}
+                                value={key ?? undefined}
+                                onChange={(val) => {
+                                  setDataKeySections((prev) => {
+                                    const next = [...prev]
+                                    next[idx] = val
+                                    if (idx === prev.length - 1 && val) next.push(null)
+                                    return next
+                                  })
+                                }}
+                                allowClear
+                                onClear={() => {
+                                  setDataKeySections((prev) => {
+                                    const next = [...prev]
+                                    next[idx] = null
+                                    return next
+                                  })
+                                }}
+                              />
+                              {!isPlaceholder && key && (
+                                <>
+                                  <Select
+                                    style={{ minWidth: 240 }}
+                                    placeholder="Apply saved filter"
+                                    options={savedFilters.map((sf) => ({ label: sf.name, value: sf.id }))}
+                                    value={sectionFilters[idx] ?? undefined}
+                                    onChange={(val) => setSectionFilters((prev) => ({ ...prev, [idx]: (val as string) || null }))}
+                                    allowClear
+                                  />
+                                  <Button
+                                    onClick={() => {
+                                      const allMetrics = getMetricList(key)
+                                      const current = new Set(sectionRows[idx] ?? [])
+                                      let tempSelected = new Set(current)
+                                      let search = ''
+                                      const MetricSelector = () => {
+                                        const [query, setQuery] = useState(search)
+                                        const [checked, setChecked] = useState<string[]>(Array.from(tempSelected))
+                                        const filtered = allMetrics.filter((m) => m.toLowerCase().includes(query.toLowerCase()))
+                                        return (
+                                          <div>
+                                            <Input placeholder="Search rows" value={query} onChange={(e) => setQuery(e.target.value)} style={{ marginBottom: 8 }} />
+                                            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                                              <Button size="small" onClick={() => setChecked(filtered)}>Select visible</Button>
+                                              <Button size="small" onClick={() => setChecked([])}>Clear</Button>
+                                              <Button size="small" onClick={() => setChecked(allMetrics)}>Select all</Button>
+                                            </div>
+                                            <div style={{ maxHeight: 360, overflow: 'auto', border: '1px solid #eee', borderRadius: 4, padding: 8 }}>
+                                              <Checkbox.Group
+                                                style={{ width: '100%' }}
+                                                value={checked}
+                                                onChange={(vals) => setChecked(vals as string[])}
+                                              >
+                                                <Space direction="vertical" style={{ width: '100%' }}>
+                                                  {filtered.map((m) => {
+                                                    const desc = getMetricDescription(m)
+                                                    return (
+                                                      <Checkbox key={m} value={m}>
+                                                        <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                                                          {m}
+                                                          {desc && (
+                                                            <Tooltip title={desc}>
+                                                              <InfoCircleOutlined style={{ marginLeft: 6, color: '#999' }} />
+                                                            </Tooltip>
+                                                          )}
+                                                        </span>
+                                                      </Checkbox>
+                                                    )
+                                                  })}
+                                                </Space>
+                                              </Checkbox.Group>
+                                            </div>
+                                            <div style={{ marginTop: 8, textAlign: 'right' }}>
+                                              <Button type="primary" onClick={() => {
+                                                setSectionRows((prev) => ({ ...prev, [idx]: checked }))
+                                                Modal.destroyAll()
+                                                message.success(`Selected ${checked.length} row(s) for table ${idx + 1}`)
+                                              }}>Apply</Button>
+                                            </div>
+                                          </div>
+                                        )
+                                      }
+                                      Modal.info({ title: 'Select rows to display', content: <MetricSelector />, width: 640, icon: null })
+                                    }}
+                                  >Rows…</Button>
+                                </>
+                              )}
                             </div>
-                            <a
-                              onClick={() => selectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-                              style={{ fontSize: 12 }}
-                            >
-                              Back to selection
-                            </a>
+                            {key && (
+                              <div style={{ overflowX: 'auto' }}>
+                                <Table
+                                  size="small"
+                                  sticky
+                                  title={() => (
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                      <div>
+                                      Showing data key: <code>{key}</code>{' '}
+                                      {((sectionFilters[idx] ? 1 : 0) > 0 || (sectionRows[idx] ?? []).length > 0) && (
+                                        <span style={{ marginLeft: 8 }}>
+                                          {sectionFilters[idx] && <Tag color="blue">filter: 1</Tag>}
+                                          <Tag color="green">rows: {(sectionRows[idx] ?? []).length}</Tag>
+                                        </span>
+                                      )}
+                                      </div>
+                                      <a
+                                        onClick={() => selectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                                        style={{ fontSize: 12 }}
+                                      >
+                                        Back to selection
+                                      </a>
+                                    </div>
+                                  )}
+                                  columns={getTableConfig(key, idx).columns as any}
+                                  dataSource={getTableConfig(key, idx).dataSource}
+                                  pagination={false}
+                                  scroll={{ x: 'max-content' }}
+                                  bordered
+                                />
+                              </div>
+                            )}
                           </div>
-                        )}
-                        columns={getTableConfig(key, idx).columns as any}
-                        dataSource={getTableConfig(key, idx).dataSource}
-                        pagination={false}
-                        scroll={{ x: 'max-content' }}
-                        bordered
-                      />
+                        )
+                      })}
                     </div>
                   )}
-                </div>
-              )
-            })}
-          </div>
-        )}
+                </>
+              ),
+            },
+            {
+              key: 'diagrams',
+              label: <span style={{ color: isDark ? '#fff' : '#000' }}>Diagrams</span>,
+              children: (
+                <>
+                  {selected.size === 0 && <div style={{ color: '#888' }}>Select one or more files above to compare.</div>}
+                  {selected.size > 0 && (
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))',
+                        gap: 16,
+                        alignItems: 'start',
+                      }}
+                    >
+                      {diagramSections.map((spec, idx) => {
+                        const metricBases = spec.key ? Array.from(getAvailableMetricBasesForKey(spec.key)) : []
+                        const series = spec.key && spec.metricBase ? buildChartSeries(spec.key, spec.metricBase) : []
+                        return (
+                          <div key={`diagram-${idx}`} style={{ border: '1px solid #e5e5e5', borderRadius: 8, padding: 12, color: isDark ? '#fff' : '#000' }}>
+                            <div style={{ marginBottom: 8, fontWeight: 500 }}>
+                              {spec.key && spec.metricBase ? (
+                                <ChartInfo k={spec.key} metricBase={spec.metricBase} />
+                              ) : (
+                                <span>New diagram</span>
+                              )}
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                              <Select
+                                size="small"
+                                style={{ width: 180 }}
+                                placeholder={commonDataKeys.length ? 'Select data key' : 'No common keys'}
+                                options={commonDataKeys.map((k) => ({ label: k, value: k }))}
+                                value={spec.key ?? undefined}
+                                onChange={(val) => {
+                                  setDiagramSections((prev) => {
+                                    const next = [...prev]
+                                    next[idx] = { key: val, metricBase: null }
+                                    if (idx === prev.length - 1) next.push({ key: null, metricBase: null })
+                                    return next
+                                  })
+                                }}
+                                allowClear
+                                onClear={() => {
+                                  setDiagramSections((prev) => {
+                                    const next = [...prev]
+                                    next[idx] = { key: null, metricBase: null }
+                                    return next
+                                  })
+                                }}
+                              />
+                              <Select
+                                size="small"
+                                style={{ width: 160 }}
+                                placeholder="Metric"
+                                options={metricBases.map((b: string) => ({ label: b.toUpperCase(), value: b }))}
+                                value={spec.metricBase ?? undefined}
+                                onChange={(v) => {
+                                  setDiagramSections((prev) => {
+                                    const next = [...prev]
+                                    next[idx] = { ...next[idx], metricBase: v }
+                                    if (idx === prev.length - 1) next.push({ key: null, metricBase: null })
+                                    return next
+                                  })
+                                }}
+                                disabled={!spec.key}
+                                allowClear
+                                onClear={() => {
+                                  setDiagramSections((prev) => {
+                                    const next = [...prev]
+                                    next[idx] = { ...next[idx], metricBase: null }
+                                    return next
+                                  })
+                                }}
+                              />
+                            </div>
+                            {spec.key && spec.metricBase && series.length === 0 && (
+                              <div style={{ color: isDark ? '#aaa' : '#888' }}>No data for {spec.metricBase.toUpperCase()}@k under <code>{spec.key}</code> in selected files.</div>
+                            )}
+                            {spec.key && spec.metricBase && series.length > 0 && (
+                              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12, alignItems: 'flex-start' }}>
+                                <div>
+                                  <LineChart series={series} width={280} height={200} isDark={isDark} />
+                                </div>
+                                <div style={{ minWidth: 120 }}>
+                                  <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                                    {series.map((s) => (
+                                      <li key={`legend-${s.name}`} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                                        <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 6, background: s.color }} />
+                                        <Tooltip title={s.name}>
+                                          <span style={{ display: 'inline-block', maxWidth: 160, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                            {s.name.length > 24 ? `${s.name.slice(0, 24)}…` : s.name}
+                                          </span>
+                                        </Tooltip>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </>
+              ),
+            },
+          ]}
+        />
+
       </section>
       {/* Filter Add/Edit Modal */}
       <Modal
@@ -1098,6 +1321,7 @@ function App() {
               <li>Selected datasets</li>
               <li>Chosen data keys (tables)</li>
               <li>Applied per-table filter and rows</li>
+              <li>Diagram sections (data key + metric)</li>
             </ul>
           </div>
         </Space>
