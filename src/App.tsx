@@ -3,38 +3,11 @@ import { Alert, Select, Spin, Table, Typography, Divider, FloatButton, Modal, In
 import { UpOutlined, InfoCircleOutlined, RightOutlined } from '@ant-design/icons'
 import './App.css'
 import './table-theme.css'
-import * as d3 from 'd3'
-
-type Manifest = {
-  root: string
-  generatedAt: string
-  folders: { name: string; files: { name: string; path: string }[] }[]
-}
-
-type LoadedFile = {
-  path: string
-  name: string
-  data: any
-  valid: boolean
-  error?: string
-}
-
-type SavedFilter = {
-  id: string
-  name: string
-  rows: string[]
-}
-
-type SavedSuite = {
-  id: string
-  name: string
-  createdAt: string
-  selected: string[]
-  dataKeySections: string[]
-  sectionFilters: Record<number, string | null>
-  sectionRows: Record<number, string[]>
-  diagramSections?: { key: string; metricBase: string }[]
-}
+import HeaderTitle from './components/HeaderTitle'
+import ChartInfo from './components/ChartInfo'
+import LineChart from './components/LineChart'
+import { buildMetricMap, getMetricDescription, parseMetricName } from './utils/metrics'
+import type { Manifest, LoadedFile, SavedFilter, SavedSuite, DiagramSpec, Series } from './types'
 
 function App() {
   const [manifest, setManifest] = useState<Manifest | null>(null)
@@ -448,95 +421,13 @@ function App() {
     return Array.from(all).sort()
   }
 
-  // Metric tooltip helpers
-  const METRIC_DESCRIPTIONS: Record<string, string> = {
-    // User-provided texts
-    accuracy: 'Accuracy – The proportion of retrieved documents that are both relevant and correctly identified out of all evaluated cases; in IR, often less informative when relevance is sparse.',
-    map: 'MAP (Mean Average Precision) – The mean of the average precision scores across all queries, rewarding systems that return relevant documents early and consistently.',
-    mrr: 'MRR (Mean Reciprocal Rank) – The average of the reciprocal ranks of the first relevant document for each query, focusing on how soon the first correct result appears.',
-    ndcg: 'nDCG (Normalized Discounted Cumulative Gain) – A graded-relevance metric that rewards placing highly relevant documents near the top, normalized so that 1.0 is the ideal ranking.',
-    precision: 'Precision (P) – The fraction of retrieved documents that are relevant; measures result quality.',
-    recall: 'Recall – The fraction of all relevant documents that were successfully retrieved; measures completeness.',
-    r_cap: 'R_cap (Recall Capped) – Recall computed only over all labels data. Less relevant since our pools are small.',
-    hole: 'Hole – The proportion or count of unlabeled data during the benchmark.',
-    f1: 'F1 score – The harmonic mean of precision and recall, balancing the two equally.',
-    f2: 'F2 score – Like F1, but weights recall twice as heavily as precision.',
-
-    // Retain other helpful defaults
-    dcg: 'DCG@k: discounted cumulative gain over the top-k ranked items (unnormalized).',
-    ap: 'AP@k: average precision for a single query up to rank k.',
-    rr: 'Reciprocal Rank@k: reciprocal of the rank of the first relevant item (per query).',
-    hitrate: 'Hit Rate@k (HR@k): whether at least one relevant item appears in the top-k (averaged over queries).',
-    hr: 'Hit Rate@k (HR@k): whether at least one relevant item appears in the top-k (averaged over queries).',
-    rprecision: 'R-Precision: precision at R where R is the number of relevant items for the query.',
-    r_precision: 'R-Precision: precision at R where R is the number of relevant items for the query.',
-  }
-
-  function metricBase(name: string): string {
-    const base = String(name).split('@')[0]?.trim().toLowerCase()
-    // unify some synonyms
-    if (base === 'r-precision') return 'rprecision'
-    if (base === 'p') return 'precision'
-    if (base === 'r-cap' || base === 'rcap') return 'r_cap'
-    if (base === 'f-1' || base === 'f_1') return 'f1'
-    if (base === 'f-2' || base === 'f_2') return 'f2'
-    if (base === 'n_dcg') return 'ndcg'
-    if (base === 'm_ap' || base === 'm-ap' || base === 'mean_average_precision') return 'map'
-    if (base === 'average_precision') return 'ap'
-    return base
-  }
-
-  function getMetricDescription(name: string): string | undefined {
-    const base = metricBase(name)
-    const known = METRIC_DESCRIPTIONS[base]
-    if (known) return known
-    // Generic fallback for any Metric@k style
-    if (String(name).includes('@')) {
-      const pretty = base.toUpperCase()
-      return `${pretty}@k: metric evaluated at cutoff k.`
-    }
-    return undefined
-  }
-
-  // Flatten helper: build metric map for a given value
-  function buildMetricMap(rootKey: string, value: any): Record<string, any> {
-    const out: Record<string, any> = {}
-    if (Array.isArray(value)) {
-      // Merge array of objects into a single flat metric map
-      value.forEach((item, i) => {
-        if (item && typeof item === 'object' && !Array.isArray(item)) {
-          for (const [k, v] of Object.entries(item)) {
-            out[k] = v as any
-          }
-        } else {
-          // Fallback: keep index when array items are primitives or arrays
-          out[`${rootKey}[${i}]`] = item
-        }
-      })
-      // If we only had objects, 'out' now holds metric keys like 'NDCG@1'
-      // If we encountered primitives, they are preserved with indexed keys above
-    } else if (value && typeof value === 'object') {
-      for (const [k, v] of Object.entries(value)) {
-        out[k] = v as any
-      }
-    } else {
-      out[rootKey] = value
-    }
-    return out
-  }
+  // Metric helpers moved to utils/metrics
 
   // ----- Visual Comparison (D3 Line Charts) -----
-  type DiagramSpec = { key: string | null; metricBase: string | null }
   const [diagramSections, setDiagramSections] = useState<DiagramSpec[]>([{ key: null, metricBase: null }])
 
   // Metric parsing helpers for charting
-  function parseMetricName(name: string): { base: string; k: number | null } {
-    const raw = String(name)
-    const [basePart, kPart] = raw.split('@')
-    const base = metricBase(basePart || '')
-    const k = kPart != null ? parseInt(kPart, 10) : NaN
-    return { base, k: Number.isFinite(k) ? k : null }
-  }
+  // parseMetricName imported from utils
 
   const getAvailableMetricBasesForKey = (key: string): string[] => {
     const union = Array.from(getMetricUnion(key))
@@ -564,8 +455,7 @@ function App() {
     setDiagramSections([...ds.map((d) => ({ key: d.key, metricBase: d.metricBase })), { key: null, metricBase: null }])
     pendingSuiteDiagramsRef.current = null
   }, [commonDataKeys, selected, filesCache])
-
-  type Series = { name: string; color: string; points: { k: number; value: number }[] }
+ 
 
   function buildChartSeries(key: string, metricBase: string): Series[] {
     const sel = Array.from(selected)
@@ -589,129 +479,6 @@ function App() {
     })
     return series
   }
-
-  const ChartInfo: React.FC<{ k: string; metricBase: string }> = ({ k, metricBase }) => {
-    const desc = getMetricDescription(`${metricBase}@k`)
-    return (
-      <span>
-        Showing <code>{metricBase}</code> across k for data key <code>{k}</code>
-        {desc && (
-          <Tooltip title={desc}>
-            <InfoCircleOutlined style={{ marginLeft: 6 }} />
-          </Tooltip>
-        )}
-      </span>
-    )
-  }
-
-  function LineChart({ series, width = 860, height = 320, isDark = false }: { series: Series[]; width?: number; height?: number; isDark?: boolean }) {
-    const ref = useRef<SVGSVGElement | null>(null)
-    useEffect(() => {
-      const svg = d3.select(ref.current)
-        .style('color', isDark ? '#fff' : '#000')
-      svg.selectAll('*').remove()
-      if (!series || series.length === 0) return
-      const margin = { top: 16, right: 24, bottom: 40, left: 56 }
-      const innerW = width - margin.left - margin.right
-      const innerH = height - margin.top - margin.bottom
-      const g = svg
-        .attr('width', width)
-        .attr('height', height)
-        .append('g')
-        .attr('transform', `translate(${margin.left},${margin.top})`)
-
-      const allPoints = series.flatMap((s) => s.points)
-      const kExtent = d3.extent(allPoints.map((p) => p.k)) as [number, number]
-      const vMax = d3.max(allPoints.map((p) => p.value)) ?? 1
-      const x = d3.scaleLinear().domain([kExtent[0] ?? 0, kExtent[1] ?? 1]).range([0, innerW])
-      const y = d3.scaleLinear().domain([0, Math.max(1, vMax)]).nice().range([innerH, 0])
-
-      const xAxis = d3.axisBottom(x).ticks(6).tickFormat((d: any) => String(d))
-      const yAxis = d3.axisLeft(y).ticks(6)
-
-      g.append('g').attr('transform', `translate(0,${innerH})`).call(xAxis as any)
-      g.append('g').call(yAxis as any)
-
-      // Improve dark-mode readability by aligning axis colors with surrounding text color
-      const hostColor = getComputedStyle(svg.node() as SVGSVGElement).color || '#ccc'
-      g.selectAll('.tick text').attr('fill', hostColor)
-      g.selectAll('.domain').attr('stroke', hostColor).style('opacity', 0.4)
-      g.selectAll('.tick line').attr('stroke', hostColor).style('opacity', 0.2)
-
-      const lineGen = d3
-        .line<{ k: number; value: number }>()
-        .x((d: { k: number; value: number }) => x(d.k))
-        .y((d: { k: number; value: number }) => y(d.value))
-        .curve(d3.curveMonotoneX)
-
-      // HTML tooltip for hover feedback
-      const tooltip = d3
-        .select('body')
-        .append('div')
-        .attr('class', 'jsonviz-chart-tooltip')
-        .style('position', 'fixed')
-        .style('z-index', '9999')
-        .style('background', isDark ? '#222' : '#fff')
-        .style('color', isDark ? '#fff' : '#000')
-        .style('padding', '6px 8px')
-        .style('border-radius', '4px')
-        .style('font-size', '12px')
-        .style('pointer-events', 'none')
-        .style('display', 'none')
-        .style('box-shadow', '0 2px 8px rgba(0,0,0,0.15)')
-        .style('border', isDark ? '1px solid rgba(255,255,255,0.12)' : '1px solid rgba(0,0,0,0.1)')
-
-      for (const s of series) {
-        g.append('path')
-          .datum(s.points)
-          .attr('fill', 'none')
-          .attr('stroke', s.color)
-          .attr('stroke-width', 2)
-          .attr('d', lineGen as any)
-
-        const circles = g
-          .selectAll(null)
-          .data(s.points)
-          .enter()
-          .append('circle')
-          .attr('cx', (d: { k: number; value: number }) => x(d.k))
-          .attr('cy', (d: { k: number; value: number }) => y(d.value))
-          .attr('r', 3)
-          .attr('fill', s.color)
-          .style('cursor', 'pointer')
-
-        circles
-          .on('mouseover', (event: MouseEvent, d: { k: number; value: number }) => {
-            const el = event.currentTarget as SVGCircleElement
-            d3.select(el).attr('r', 5)
-            tooltip
-              .style('display', 'block')
-              .html(`<strong>${s.name}</strong><br/>k=${d.k}<br/>${Number(d.value).toFixed(5)}`)
-          })
-          .on('mousemove', (event: MouseEvent) => {
-            tooltip.style('left', event.clientX + 12 + 'px').style('top', event.clientY + 12 + 'px')
-          })
-          .on('mouseout', (event: MouseEvent) => {
-            const el = event.currentTarget as SVGCircleElement
-            d3.select(el).attr('r', 3)
-            tooltip.style('display', 'none')
-          })
-
-        circles
-          .append('title')
-          .text((d: { k: number; value: number }) => `${s.name}: k=${d.k}, value=${Number(d.value).toFixed(5)}`)
-
-        // ensure tooltip cleans up if the series updates
-      }
-
-      // Legend is rendered in React on the right side of the chart
-      return () => {
-        tooltip.remove()
-      }
-    }, [series, width, height])
-    return <svg ref={ref} />
-  }
-
   // Build table data for a given data key
   function getTableConfig(key: string | null, sectionIndex?: number) {
     if (!key) return { columns: [], dataSource: [] as any[] }
@@ -779,11 +546,7 @@ function App() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: 16 }}>
-      <div>
-        <Typography.Title level={2} style={{ margin: 0, color: isDark ? '#bbb' : '#444' }}>
-          Benchmark JSON Visualizer
-        </Typography.Title>
-      </div>
+      <HeaderTitle isDark={isDark} />
       <section>
         <div ref={selectionRef} id="selection-anchor" />
         <Collapse
