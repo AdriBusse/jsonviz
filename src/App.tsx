@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Select, Spin, Table, Typography, Divider, FloatButton, Modal, Input, Space, Tag, Button, Checkbox, Popconfirm, message } from 'antd'
-import { UpOutlined } from '@ant-design/icons'
+import { Alert, Select, Spin, Table, Typography, Divider, FloatButton, Modal, Input, Space, Tag, Button, Checkbox, Popconfirm, message, Tooltip } from 'antd'
+import { UpOutlined, InfoCircleOutlined } from '@ant-design/icons'
 import './App.css'
 
 type Manifest = {
@@ -387,6 +387,56 @@ function App() {
     return Array.from(all).sort()
   }
 
+  // Metric tooltip helpers
+  const METRIC_DESCRIPTIONS: Record<string, string> = {
+    // User-provided texts
+    accuracy: 'Accuracy – The proportion of retrieved documents that are both relevant and correctly identified out of all evaluated cases; in IR, often less informative when relevance is sparse.',
+    map: 'MAP (Mean Average Precision) – The mean of the average precision scores across all queries, rewarding systems that return relevant documents early and consistently.',
+    mrr: 'MRR (Mean Reciprocal Rank) – The average of the reciprocal ranks of the first relevant document for each query, focusing on how soon the first correct result appears.',
+    ndcg: 'nDCG (Normalized Discounted Cumulative Gain) – A graded-relevance metric that rewards placing highly relevant documents near the top, normalized so that 1.0 is the ideal ranking.',
+    precision: 'Precision (P) – The fraction of retrieved documents that are relevant; measures result quality.',
+    recall: 'Recall – The fraction of all relevant documents that were successfully retrieved; measures completeness.',
+    r_cap: 'R_cap (Recall Capped) – Recall computed only over all labels data. Less relevant since our pools are small.',
+    hole: 'Hole – The proportion or count of unlabeled data during the benchmark.',
+    f1: 'F1 score – The harmonic mean of precision and recall, balancing the two equally.',
+    f2: 'F2 score – Like F1, but weights recall twice as heavily as precision.',
+
+    // Retain other helpful defaults
+    dcg: 'DCG@k: discounted cumulative gain over the top-k ranked items (unnormalized).',
+    ap: 'AP@k: average precision for a single query up to rank k.',
+    rr: 'Reciprocal Rank@k: reciprocal of the rank of the first relevant item (per query).',
+    hitrate: 'Hit Rate@k (HR@k): whether at least one relevant item appears in the top-k (averaged over queries).',
+    hr: 'Hit Rate@k (HR@k): whether at least one relevant item appears in the top-k (averaged over queries).',
+    rprecision: 'R-Precision: precision at R where R is the number of relevant items for the query.',
+    r_precision: 'R-Precision: precision at R where R is the number of relevant items for the query.',
+  }
+
+  function metricBase(name: string): string {
+    const base = String(name).split('@')[0]?.trim().toLowerCase()
+    // unify some synonyms
+    if (base === 'r-precision') return 'rprecision'
+    if (base === 'p') return 'precision'
+    if (base === 'r-cap' || base === 'rcap') return 'r_cap'
+    if (base === 'f-1' || base === 'f_1') return 'f1'
+    if (base === 'f-2' || base === 'f_2') return 'f2'
+    if (base === 'n_dcg') return 'ndcg'
+    if (base === 'm_ap' || base === 'm-ap' || base === 'mean_average_precision') return 'map'
+    if (base === 'average_precision') return 'ap'
+    return base
+  }
+
+  function getMetricDescription(name: string): string | undefined {
+    const base = metricBase(name)
+    const known = METRIC_DESCRIPTIONS[base]
+    if (known) return known
+    // Generic fallback for any Metric@k style
+    if (String(name).includes('@')) {
+      const pretty = base.toUpperCase()
+      return `${pretty}@k: metric evaluated at cutoff k.`
+    }
+    return undefined
+  }
+
   // Flatten helper: build metric map for a given value
   function buildMetricMap(rootKey: string, value: any): Record<string, any> {
     const out: Record<string, any> = {}
@@ -445,7 +495,19 @@ function App() {
     const numFmt = (v: any) => (typeof v === 'number' ? Number(v.toFixed(5)) : v)
 
     const columns: any[] = [
-      { title: 'Metric', dataIndex: 'metric', key: 'metric', fixed: 'left', width: 280 },
+      { title: 'Metric', dataIndex: 'metric', key: 'metric', fixed: 'left', width: 280, render: (m: string) => {
+        const desc = getMetricDescription(m)
+        return (
+          <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+            <code>{m}</code>
+            {desc && (
+              <Tooltip title={desc}>
+                <InfoCircleOutlined style={{ marginLeft: 6, color: '#999' }} />
+              </Tooltip>
+            )}
+          </span>
+        )
+      } },
       ...sel.map((p) => {
         const f = filesCache[p]
         const titleName = f?.name || p.split('/').pop()
@@ -574,9 +636,21 @@ function App() {
                   <div>
                     <div style={{ fontWeight: 600 }}>{f.name}</div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
-                      {f.rows.map((p, i) => (
-                        <Tag key={i}>{p}</Tag>
-                      ))}
+                      {f.rows.map((p, i) => {
+                        const desc = getMetricDescription(p)
+                        return (
+                          <Tag key={i}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                              {p}
+                              {desc && (
+                                <Tooltip title={desc}>
+                                  <InfoCircleOutlined style={{ marginLeft: 6, color: '#999' }} />
+                                </Tooltip>
+                              )}
+                            </span>
+                          </Tag>
+                        )
+                      })}
                     </div>
                   </div>
                   <Space>
@@ -697,9 +771,21 @@ function App() {
                                       onChange={(vals) => setChecked(vals as string[])}
                                     >
                                       <Space direction="vertical" style={{ width: '100%' }}>
-                                        {filtered.map((m) => (
-                                          <Checkbox key={m} value={m}>{m}</Checkbox>
-                                        ))}
+                                        {filtered.map((m) => {
+                                          const desc = getMetricDescription(m)
+                                          return (
+                                            <Checkbox key={m} value={m}>
+                                              <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                                                {m}
+                                                {desc && (
+                                                  <Tooltip title={desc}>
+                                                    <InfoCircleOutlined style={{ marginLeft: 6, color: '#999' }} />
+                                                  </Tooltip>
+                                                )}
+                                              </span>
+                                            </Checkbox>
+                                          )
+                                        })}
                                       </Space>
                                     </Checkbox.Group>
                                   </div>
@@ -794,9 +880,21 @@ function App() {
                 <Space direction="vertical" style={{ width: '100%' }}>
                   {getAllAvailableMetrics()
                     .filter((m) => m.toLowerCase().includes(filterSearch.toLowerCase()))
-                    .map((m) => (
-                      <Checkbox key={m} value={m}>{m}</Checkbox>
-                    ))}
+                    .map((m) => {
+                      const desc = getMetricDescription(m)
+                      return (
+                        <Checkbox key={m} value={m}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                            {m}
+                            {desc && (
+                              <Tooltip title={desc}>
+                                <InfoCircleOutlined style={{ marginLeft: 6, color: '#999' }} />
+                              </Tooltip>
+                            )}
+                          </span>
+                        </Checkbox>
+                      )
+                    })}
                 </Space>
               </Checkbox.Group>
             </div>
