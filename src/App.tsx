@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Select, Spin, Table, Typography, Divider, FloatButton, Modal, Input, Space, Tag, Button, Checkbox, Popconfirm, message, Tooltip } from 'antd'
 import { UpOutlined, InfoCircleOutlined } from '@ant-design/icons'
 import './App.css'
+import * as d3 from 'd3'
 
 type Manifest = {
   root: string
@@ -464,6 +465,139 @@ function App() {
     return out
   }
 
+  // ----- Visual Comparison (D3 Line Chart) -----
+  const [chartKey, setChartKey] = useState<string | null>(null)
+  const [chartMetricBase, setChartMetricBase] = useState<string | null>(null)
+
+  // Metric parsing helpers for charting
+  function parseMetricName(name: string): { base: string; k: number | null } {
+    const raw = String(name)
+    const [basePart, kPart] = raw.split('@')
+    const base = metricBase(basePart || '')
+    const k = kPart != null ? parseInt(kPart, 10) : NaN
+    return { base, k: Number.isFinite(k) ? k : null }
+  }
+
+  const getAvailableMetricBasesForKey = (key: string): string[] => {
+    const union = Array.from(getMetricUnion(key))
+    const bases = new Set<string>()
+    for (const m of union) {
+      const { base, k } = parseMetricName(m)
+      if (k != null) bases.add(base)
+    }
+    return Array.from(bases).sort()
+  }
+
+  const chartMetricBases = useMemo(() => {
+    return chartKey ? getAvailableMetricBasesForKey(chartKey) : []
+  }, [chartKey, selected, filesCache])
+
+  type Series = { name: string; color: string; points: { k: number; value: number }[] }
+
+  const chartSeries: Series[] = useMemo(() => {
+    if (!chartKey || !chartMetricBase) return []
+    const sel = Array.from(selected)
+    const validFiles = sel
+      .map((p) => filesCache[p])
+      .filter((f): f is LoadedFile => !!f && f.valid)
+    const palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+    const series: Series[] = []
+    validFiles.forEach((f, idx) => {
+      const map = buildMetricMap(chartKey, f.data?.[chartKey])
+      const points: { k: number; value: number }[] = []
+      for (const [metricName, v] of Object.entries(map)) {
+        const { base, k } = parseMetricName(metricName)
+        if (base === chartMetricBase && k != null) {
+          const num = typeof v === 'number' ? v : Number(v)
+          if (Number.isFinite(num)) points.push({ k, value: num })
+        }
+      }
+      points.sort((a, b) => a.k - b.k)
+      if (points.length > 0) series.push({ name: f.name || f.path, color: palette[idx % palette.length], points })
+    })
+    return series
+  }, [chartKey, chartMetricBase, selected, filesCache])
+
+  const ChartInfo: React.FC = () => {
+    if (!chartKey || !chartMetricBase) return null
+    const metricLabel = chartMetricBase
+    const desc = getMetricDescription(`${metricLabel}@k`)
+    return (
+      <span style={{ color: '#666' }}>
+        Showing <code>{metricLabel}</code> across k for data key <code>{chartKey}</code>
+        {desc && (
+          <Tooltip title={desc}>
+            <InfoCircleOutlined style={{ marginLeft: 6 }} />
+          </Tooltip>
+        )}
+      </span>
+    )
+  }
+
+  function LineChart({ series, width = 860, height = 320 }: { series: Series[]; width?: number; height?: number }) {
+    const ref = useRef<SVGSVGElement | null>(null)
+    useEffect(() => {
+      const svg = d3.select(ref.current)
+      svg.selectAll('*').remove()
+      if (!series || series.length === 0) return
+      const margin = { top: 16, right: 24, bottom: 40, left: 56 }
+      const innerW = width - margin.left - margin.right
+      const innerH = height - margin.top - margin.bottom
+      const g = svg
+        .attr('width', width)
+        .attr('height', height)
+        .append('g')
+        .attr('transform', `translate(${margin.left},${margin.top})`)
+
+      const allPoints = series.flatMap((s) => s.points)
+      const kExtent = d3.extent(allPoints.map((p) => p.k)) as [number, number]
+      const vMax = d3.max(allPoints.map((p) => p.value)) ?? 1
+      const x = d3.scaleLinear().domain([kExtent[0] ?? 0, kExtent[1] ?? 1]).range([0, innerW])
+      const y = d3.scaleLinear().domain([0, Math.max(1, vMax)]).nice().range([innerH, 0])
+
+      const xAxis = d3.axisBottom(x).ticks(6).tickFormat((d: any) => String(d))
+      const yAxis = d3.axisLeft(y).ticks(6)
+
+      g.append('g').attr('transform', `translate(0,${innerH})`).call(xAxis as any)
+      g.append('g').call(yAxis as any)
+
+      const lineGen = d3
+        .line<{ k: number; value: number }>()
+        .x((d: { k: number; value: number }) => x(d.k))
+        .y((d: { k: number; value: number }) => y(d.value))
+        .curve(d3.curveMonotoneX)
+
+      for (const s of series) {
+        g.append('path')
+          .datum(s.points)
+          .attr('fill', 'none')
+          .attr('stroke', s.color)
+          .attr('stroke-width', 2)
+          .attr('d', lineGen as any)
+
+        g
+          .selectAll(`.pt-${s.name}`)
+          .data(s.points)
+          .enter()
+          .append('circle')
+          .attr('cx', (d: { k: number; value: number }) => x(d.k))
+          .attr('cy', (d: { k: number; value: number }) => y(d.value))
+          .attr('r', 3)
+          .attr('fill', s.color)
+          .append('title')
+          .text((d: { k: number; value: number }) => `k=${d.k}, value=${d.value}`)
+      }
+
+      const legend = g.append('g').attr('transform', `translate(0,${-8})`)
+      series.forEach((s, i) => {
+        const item = legend.append('g').attr('transform', `translate(${i * 200},0)`)
+        item.append('line').attr('x1', 0).attr('x2', 16).attr('y1', 0).attr('y2', 0).attr('stroke', s.color).attr('stroke-width', 3)
+        item.append('text').attr('x', 22).attr('y', 4).attr('fill', '#333').style('font-size', '12px').text(s.name)
+      })
+    }, [series, width, height])
+    return <svg ref={ref} />
+  }
+
   // Build table data for a given data key
   function getTableConfig(key: string | null, sectionIndex?: number) {
     if (!key) return { columns: [], dataSource: [] as any[] }
@@ -540,6 +674,43 @@ function App() {
           </span>
           {manifest?.generatedAt && (
             <span style={{ marginLeft: 12 }}>manifest: {new Date(manifest.generatedAt).toLocaleString()}</span>
+          )}
+        </div>
+
+        {/* Visual Comparison (Line Chart) */}
+        <div style={{ border: '1px solid #e5e5e5', borderRadius: 8, padding: 12, marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <strong style={{ marginRight: 8 }}>Visual Comparison</strong>
+            <span style={{ color: '#666' }}>(compare methods across k)</span>
+          </div>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
+            <Select
+              style={{ minWidth: 240 }}
+              placeholder="Select data key"
+              options={commonDataKeys.map((k) => ({ label: k, value: k }))}
+              value={chartKey ?? undefined}
+              onChange={(v) => { setChartKey(v); setChartMetricBase(null) }}
+              allowClear
+            />
+            <Select
+              style={{ minWidth: 240 }}
+              placeholder="Select metric"
+              options={chartMetricBases.map((b: string) => ({ label: b.toUpperCase(), value: b }))}
+              value={chartMetricBase ?? undefined}
+              onChange={(v) => setChartMetricBase(v)}
+              disabled={!chartKey}
+              allowClear
+            />
+            <ChartInfo />
+          </div>
+          {selected.size === 0 && <div style={{ color: '#888' }}>Select one or more files above to compare.</div>}
+          {chartKey && chartMetricBase && chartSeries.length === 0 && (
+            <div style={{ color: '#888' }}>No data for {chartMetricBase.toUpperCase()}@k under <code>{chartKey}</code> in selected files.</div>
+          )}
+          {chartKey && chartMetricBase && chartSeries.length > 0 && (
+            <div style={{ overflowX: 'auto' }}>
+              <LineChart series={chartSeries} />
+            </div>
           )}
         </div>
 
