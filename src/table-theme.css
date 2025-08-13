@@ -114,3 +114,13 @@
   background: rgba(0,0,0,0.04);
   color: #000;
 }
+
+/* Per-row min/max highlighting */
+.themedTable .cell-max {
+  color: #2ecc71 !important; /* green */
+  font-weight: 600;
+}
+.themedTable .cell-min {
+  color: #e74c3c !important; /* red */
+  font-weight: 600;
+}

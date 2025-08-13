@@ -5,7 +5,7 @@ export const METRIC_DESCRIPTIONS: Record<string, string> = {
   ndcg: 'nDCG (Normalized Discounted Cumulative Gain) – A graded-relevance metric that rewards placing highly relevant documents near the top, normalized so that 1.0 is the ideal ranking.',
   precision: 'Precision (P) – The fraction of retrieved documents that are relevant; measures result quality.',
   recall: 'Recall – The fraction of all relevant documents that were successfully retrieved; measures completeness.',
-  r_cap: 'R_cap (Recall Capped) – Recall computed only over all labels data. Less relevant since our pools are small.',
+  r_cap: 'R_cap (Recall Capped) – Recall computed it evaluates how well the top-k captures the best possible proportion of relevant documents.',
   hole: 'Hole – The proportion or count of unlabeled data during the benchmark.',
   f1: 'F1 score – The harmonic mean of precision and recall, balancing the two equally.',
   f2: 'F2 score – Like F1, but weights recall twice as heavily as precision.',

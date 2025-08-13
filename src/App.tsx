@@ -721,6 +721,24 @@ function App() {
       return row
     })
 
+    // Compute per-row numeric min/max across selected files for highlighting
+    const extremaByMetric: Record<string, { min: number; max: number; count: number }> = {}
+    for (const row of dataSource) {
+      const nums: number[] = []
+      for (const f of validFiles) {
+        const val = row[f.path]
+        const num = typeof val === 'number' ? val : typeof val === 'string' ? Number(val) : NaN
+        if (Number.isFinite(num)) nums.push(num)
+      }
+      if (nums.length >= 2) {
+        extremaByMetric[row.metric] = {
+          min: Math.min(...nums),
+          max: Math.max(...nums),
+          count: nums.length,
+        }
+      }
+    }
+
     const numFmt = (v: any) => (typeof v === 'number' ? Number(v.toFixed(5)) : v)
 
     const columns: any[] = [
@@ -744,10 +762,19 @@ function App() {
           title: <span style={{ color: isDark ? '#fff' : '#000' }}>{titleName}</span>,
           dataIndex: p,
           key: p,
-          render: (v: any) => {
+          render: (v: any, record: any) => {
             if (!f) return <Spin size="small" />
             if (!f.valid) return <span style={{ color: isDark ? '#aaa' : '#999' }}>invalid</span>
-            return v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : numFmt(v)
+            if (v === undefined) return ''
+            if (typeof v === 'object') return JSON.stringify(v)
+            const ext = extremaByMetric[record.metric]
+            const num = typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN
+            if (!Number.isFinite(num)) return String(v)
+            if (ext && ext.count >= 2) {
+              if (num === ext.max) return <span className="cell-max">{numFmt(num)}</span>
+              if (num === ext.min) return <span className="cell-min">{numFmt(num)}</span>
+            }
+            return numFmt(num)
           },
           align: 'right' as const,
           width: 180,
