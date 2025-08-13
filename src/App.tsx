@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Select, Spin, Table, Typography, Divider, FloatButton, Modal, Input, Space, Tag, Button, Checkbox, Popconfirm, message, Tooltip, Tabs, Collapse, Dropdown } from 'antd'
+import { Alert, Select, Spin, Table, Typography, Divider, FloatButton, Modal, Input, Space, Tag, Button, Checkbox, Popconfirm, message, Tooltip, Tabs, Collapse, Dropdown, Switch } from 'antd'
 import { UpOutlined, InfoCircleOutlined, RightOutlined, DownloadOutlined } from '@ant-design/icons'
 import './App.css'
 import './table-theme.css'
 import HeaderTitle from './components/HeaderTitle'
 import ChartInfo from './components/ChartInfo'
 import LineChart from './components/LineChart'
+import ParetoChart from './components/ParetoChart'
 import { buildMetricMap, getMetricDescription, parseMetricName } from './utils/metrics'
 import type { Manifest, LoadedFile, SavedFilter, SavedSuite, DiagramSpec, Series } from './types'
 
@@ -491,6 +492,115 @@ function App() {
     if (!previewDiagram || !previewDiagram.key || !previewDiagram.metricBase) return [] as Series[]
     return buildChartSeries(previewDiagram.key, previewDiagram.metricBase)
   }, [previewDiagram, selected, filesCache])
+
+  // ----- Pareto Frontier (separate area) -----
+  const selectedValidFiles = useMemo(() => {
+    return Array.from(selected)
+      .map((p) => filesCache[p])
+      .filter((f): f is LoadedFile => !!f && f.valid)
+  }, [selected, filesCache])
+  const [paretoBaseline, setParetoBaseline] = useState<string | null>(null)
+  const [paretoVariant, setParetoVariant] = useState<string | null>(null)
+  const [paretoCategories, setParetoCategories] = useState<string[]>([])
+  const [paretoMetricBase, setParetoMetricBase] = useState<string | null>(null)
+  const [paretoK, setParetoK] = useState<number | null>(null)
+  const [paretoShowFrontier, setParetoShowFrontier] = useState(true)
+  const [paretoShowDiagonal, setParetoShowDiagonal] = useState(true)
+  const [paretoMaximizeX, setParetoMaximizeX] = useState(true)
+  const [paretoMaximizeY, setParetoMaximizeY] = useState(true)
+
+  // Initialize defaults when selection changes
+  useEffect(() => {
+    if (!paretoBaseline && selectedValidFiles[0]) setParetoBaseline(selectedValidFiles[0].path)
+    if (!paretoVariant && selectedValidFiles[1]) setParetoVariant(selectedValidFiles[1].path)
+    // Preselect likely category keys
+    if (paretoCategories.length === 0 && commonDataKeys.length > 0) {
+      const likely = commonDataKeys.filter((k) => /gold|generic|synonym|short|shorten|shortened/i.test(k))
+      setParetoCategories(likely.length ? likely : commonDataKeys.slice(0, Math.min(8, commonDataKeys.length)))
+    }
+  }, [selectedValidFiles, commonDataKeys])
+
+  // Collect available metric bases (intersection across chosen files and categories)
+  const paretoMetricBases = useMemo(() => {
+    const bases = new Set<string>()
+    const b = paretoBaseline ? filesCache[paretoBaseline] : null
+    const v = paretoVariant ? filesCache[paretoVariant] : null
+    if (!b || !v) return [] as string[]
+    const accum: Record<string, number> = {}
+    for (const cat of paretoCategories) {
+      const mapB = buildMetricMap(cat, b.data?.[cat])
+      const mapV = buildMetricMap(cat, v.data?.[cat])
+      const basesB = new Set(Object.keys(mapB).map((m) => parseMetricName(m).base))
+      const basesV = new Set(Object.keys(mapV).map((m) => parseMetricName(m).base))
+      for (const base of basesB) {
+        if (basesV.has(base)) accum[base] = (accum[base] || 0) + 1
+      }
+    }
+    for (const [base, count] of Object.entries(accum)) {
+      if (count === paretoCategories.length) bases.add(base)
+    }
+    const out = Array.from(bases)
+    out.sort()
+    return out
+  }, [paretoBaseline, paretoVariant, paretoCategories, filesCache])
+
+  // Collect available k values for selected base (intersection across files and categories)
+  const paretoKs = useMemo(() => {
+    if (!paretoMetricBase) return [] as number[]
+    const b = paretoBaseline ? filesCache[paretoBaseline] : null
+    const v = paretoVariant ? filesCache[paretoVariant] : null
+    if (!b || !v) return [] as number[]
+    const counter: Record<number, number> = {}
+    for (const cat of paretoCategories) {
+      const mapB = buildMetricMap(cat, b.data?.[cat])
+      const mapV = buildMetricMap(cat, v.data?.[cat])
+      const ksB = new Set(Object.keys(mapB).map((m) => parseMetricName(m)).filter((x) => x.base === paretoMetricBase && x.k != null).map((x) => x.k as number))
+      const ksV = new Set(Object.keys(mapV).map((m) => parseMetricName(m)).filter((x) => x.base === paretoMetricBase && x.k != null).map((x) => x.k as number))
+      for (const k of ksB) {
+        if (ksV.has(k)) counter[k] = (counter[k] || 0) + 1
+      }
+    }
+    const all = Object.entries(counter).filter(([, c]) => c === paretoCategories.length).map(([k]) => Number(k))
+    all.sort((a, b) => a - b)
+    return all
+  }, [paretoMetricBase, paretoBaseline, paretoVariant, paretoCategories, filesCache])
+
+  useEffect(() => {
+    if (!paretoMetricBase && paretoMetricBases.length) setParetoMetricBase(paretoMetricBases[0])
+  }, [paretoMetricBases])
+  useEffect(() => {
+    if (!paretoK && paretoKs.length) setParetoK(paretoKs[0])
+  }, [paretoKs])
+
+  const paretoPoints = useMemo(() => {
+    if (!paretoBaseline || !paretoVariant || !paretoMetricBase || paretoK == null) return []
+    const b = filesCache[paretoBaseline]
+    const v = filesCache[paretoVariant]
+    if (!b || !v) return []
+    const pts: { category: string; x: number; y: number }[] = []
+    for (const cat of paretoCategories) {
+      const mapB = buildMetricMap(cat, b.data?.[cat])
+      const mapV = buildMetricMap(cat, v.data?.[cat])
+      let xb: number | null = null
+      let yv: number | null = null
+      for (const [mk, mv] of Object.entries(mapB)) {
+        const parsed = parseMetricName(mk)
+        if (parsed.base === paretoMetricBase && parsed.k === paretoK) {
+          const num = typeof mv === 'number' ? mv : Number(mv)
+          if (Number.isFinite(num)) xb = num
+        }
+      }
+      for (const [mk, mv] of Object.entries(mapV)) {
+        const parsed = parseMetricName(mk)
+        if (parsed.base === paretoMetricBase && parsed.k === paretoK) {
+          const num = typeof mv === 'number' ? mv : Number(mv)
+          if (Number.isFinite(num)) yv = num
+        }
+      }
+      if (xb != null && yv != null) pts.push({ category: cat, x: xb, y: yv })
+    }
+    return pts
+  }, [paretoBaseline, paretoVariant, paretoMetricBase, paretoK, paretoCategories, filesCache])
 
   // Metric parsing helpers for charting
   // parseMetricName imported from utils
@@ -985,6 +1095,97 @@ function App() {
             )}
           </Collapse.Panel>
         </Collapse>
+      </section>
+
+      {/* Pareto Frontier (separate area) */}
+      <section style={{ margin: '24px 0' }}>
+        <Divider orientation="left">Pareto Frontier Comparison</Divider>
+        <Space direction="vertical" style={{ width: '100%' }} size={12}>
+          <Space wrap>
+            <div>
+              <div style={{ marginBottom: 4 }}>Baseline method</div>
+              <Select
+                style={{ width: 280 }}
+                placeholder="Select baseline"
+                value={paretoBaseline ?? undefined}
+                onChange={(v) => setParetoBaseline(v)}
+                options={selectedValidFiles.map((f) => ({ label: f.name || f.path, value: f.path }))}
+              />
+            </div>
+            <div>
+              <div style={{ marginBottom: 4 }}>Variant method</div>
+              <Select
+                style={{ width: 280 }}
+                placeholder="Select variant"
+                value={paretoVariant ?? undefined}
+                onChange={(v) => setParetoVariant(v)}
+                options={selectedValidFiles.map((f) => ({ label: f.name || f.path, value: f.path }))}
+              />
+            </div>
+            <div>
+              <div style={{ marginBottom: 4 }}>Categories</div>
+              <Select
+                mode="multiple"
+                style={{ minWidth: 360 }}
+                placeholder="Select categories (data keys)"
+                value={paretoCategories}
+                onChange={(vals) => setParetoCategories(vals)}
+                options={commonDataKeys.map((k) => ({ label: k, value: k }))}
+              />
+            </div>
+          </Space>
+          <Space wrap>
+            <div>
+              <div style={{ marginBottom: 4 }}>Metric</div>
+              <Select
+                style={{ width: 200 }}
+                placeholder="Metric base"
+                value={paretoMetricBase ?? undefined}
+                onChange={(v) => { setParetoMetricBase(v); setParetoK(null) }}
+                options={paretoMetricBases.map((b) => ({ label: b, value: b }))}
+              />
+              <Select
+                style={{ width: 160, marginLeft: 8 }}
+                placeholder="k"
+                value={paretoK ?? undefined}
+                onChange={(v) => setParetoK(v)}
+                options={paretoKs.map((k) => ({ label: String(k), value: k }))}
+              />
+            </div>
+            <div>
+              <div style={{ marginBottom: 4 }}>Display</div>
+              <Space>
+                <span>Frontier</span>
+                <Switch checked={paretoShowFrontier} onChange={setParetoShowFrontier} />
+                <span>Diagonal</span>
+                <Switch checked={paretoShowDiagonal} onChange={setParetoShowDiagonal} />
+                <span>Maximize X</span>
+                <Switch checked={paretoMaximizeX} onChange={setParetoMaximizeX} />
+                <span>Maximize Y</span>
+                <Switch checked={paretoMaximizeY} onChange={setParetoMaximizeY} />
+              </Space>
+            </div>
+          </Space>
+          <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'start', gap: 12 }}>
+            <div style={{ color: isDark ? '#aaa' : '#666', maxWidth: 320, fontSize: 12 }}>
+              Compare categories by plotting baseline (X) vs variant (Y) for the selected metric and k. Points above the diagonal favor the variant.
+            </div>
+            <div>
+              <ParetoChart
+                points={paretoPoints}
+                width={900}
+                height={520}
+                isDark={isDark}
+                xLabel={paretoMetricBase && paretoK != null ? `${paretoMetricBase}@${paretoK} (baseline)` : 'baseline'}
+                yLabel={paretoMetricBase && paretoK != null ? `${paretoMetricBase}@${paretoK} (variant)` : 'variant'}
+                showFrontier={paretoShowFrontier}
+                showDiagonal={paretoShowDiagonal}
+                maximizeX={paretoMaximizeX}
+                maximizeY={paretoMaximizeY}
+              />
+            </div>
+          </div>
+        </Space>
       </section>
 
       <section>
