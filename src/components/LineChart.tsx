@@ -2,9 +2,18 @@ import { useEffect, useRef } from 'react'
 import * as d3 from 'd3'
 import type { Series } from '../types'
 
-type Props = { series: Series[]; width?: number; height?: number; isDark?: boolean; exportRef?: (el: SVGSVGElement | null) => void }
+type Props = {
+  series: Series[]
+  width?: number
+  height?: number
+  isDark?: boolean
+  exportRef?: (el: SVGSVGElement | null) => void
+  highlightedSeries?: string | null
+  xLabel?: string
+  yLabel?: string
+}
 
-export default function LineChart({ series, width = 860, height = 320, isDark = false, exportRef }: Props) {
+export default function LineChart({ series, width = 860, height = 320, isDark = false, exportRef, highlightedSeries = null, xLabel, yLabel }: Props) {
   const ref = useRef<SVGSVGElement | null>(null)
   useEffect(() => {
     const svg = d3.select(ref.current).style('color', isDark ? '#fff' : '#000')
@@ -32,10 +41,41 @@ export default function LineChart({ series, width = 860, height = 320, isDark = 
     g.append('g').attr('transform', `translate(0,${innerH})`).call(xAxis as any)
     g.append('g').call(yAxis as any)
 
-    const hostColor = getComputedStyle(svg.node() as SVGSVGElement).color || '#ccc'
-    g.selectAll('.tick text').attr('fill', hostColor)
-    g.selectAll('.domain').attr('stroke', hostColor).style('opacity', 0.4)
-    g.selectAll('.tick line').attr('stroke', hostColor).style('opacity', 0.2)
+    // High-contrast axis styling for visibility on white and dark backgrounds
+    const axisTextColor = isDark ? '#e6e6e6' : '#333'
+    const axisStrokeColor = isDark ? '#b5b5b5' : '#444'
+    g.selectAll('.tick text').attr('fill', axisTextColor)
+    g.selectAll('.domain')
+      .attr('stroke', axisStrokeColor)
+      .attr('stroke-width', 1)
+      .style('opacity', 0.9)
+    g.selectAll('.tick line')
+      .attr('stroke', axisStrokeColor)
+      .attr('stroke-width', 0.75)
+      .style('opacity', isDark ? 0.35 : 0.35)
+
+    // Axis labels if provided
+    if (xLabel) {
+      g.append('text')
+        .attr('class', 'axis-label-x')
+        .attr('x', innerW / 2)
+        .attr('y', innerH + 34)
+        .attr('text-anchor', 'middle')
+        .attr('fill', axisTextColor)
+        .style('opacity', 0.75)
+        .style('font-size', '12px')
+        .text(xLabel)
+    }
+    if (yLabel) {
+      g.append('text')
+        .attr('class', 'axis-label-y')
+        .attr('transform', `rotate(-90) translate(${-innerH / 2}, -42)`) // position left of y-axis
+        .attr('text-anchor', 'middle')
+        .attr('fill', axisTextColor)
+        .style('opacity', 0.75)
+        .style('font-size', '12px')
+        .text(yLabel)
+    }
 
     const lineGen = d3
       .line<{ k: number; value: number }>()
@@ -66,6 +106,8 @@ export default function LineChart({ series, width = 860, height = 320, isDark = 
         .attr('stroke', s.color)
         .attr('stroke-width', 2)
         .attr('d', lineGen as any)
+        .attr('class', 'series-path')
+        .attr('data-series', s.name)
 
         const circles = g
           .selectAll(null)
@@ -76,6 +118,8 @@ export default function LineChart({ series, width = 860, height = 320, isDark = 
           .attr('cy', (d: { k: number; value: number }) => y(d.value))
           .attr('r', 3)
           .attr('fill', s.color)
+          .attr('class', 'series-point')
+          .attr('data-series', s.name)
           .style('cursor', 'pointer')
 
         circles
@@ -102,6 +146,37 @@ export default function LineChart({ series, width = 860, height = 320, isDark = 
       tooltip.remove()
     }
   }, [series, width, height, isDark])
+
+  // Apply highlight styling without redrawing the chart
+  useEffect(() => {
+    const svgEl = ref.current
+    if (!svgEl) return
+    const g = d3.select(svgEl).select('g')
+    if (g.empty()) return
+    const hasHighlight = !!highlightedSeries
+    const paths = g.selectAll<SVGPathElement, unknown>('.series-path')
+    const points = g.selectAll<SVGCircleElement, unknown>('.series-point')
+    if (!hasHighlight) {
+      paths.attr('opacity', 1).attr('stroke-width', 2)
+      points.attr('opacity', 1)
+      return
+    }
+    paths.attr('opacity', 0.25).attr('stroke-width', 2)
+    points.attr('opacity', 0.2)
+    const targetPaths = paths.filter(function () {
+      return (this as SVGPathElement).getAttribute('data-series') === highlightedSeries
+    })
+    const targetPoints = points.filter(function () {
+      return (this as SVGCircleElement).getAttribute('data-series') === highlightedSeries
+    })
+    targetPaths.attr('opacity', 1).attr('stroke-width', 3.5)
+    targetPoints.attr('opacity', 1)
+    // bring highlighted path to front
+    targetPaths.each(function () {
+      const n = this as SVGPathElement
+      n.parentNode && n.parentNode.appendChild(n)
+    })
+  }, [highlightedSeries])
   useEffect(() => {
     exportRef?.(ref.current)
     return () => exportRef?.(null)

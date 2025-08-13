@@ -50,6 +50,9 @@ function App() {
   const [activeSuiteId, setActiveSuiteId] = useState<string | undefined>(undefined)
   const [saveModalOpen, setSaveModalOpen] = useState(false)
   const [saveName, setSaveName] = useState('')
+  // Client-side uploaded folders and input ref
+  const [uploadedFolders, setUploadedFolders] = useState<{ name: string; files: { name: string; path: string }[] }[]>([])
+  const uploadInputRef = useRef<HTMLInputElement | null>(null)
   // When loading a suite, defer applying dataKeySections until keys are available
   const pendingSuiteKeysRef = useRef<string[] | null>(null)
   // Defer applying diagram sections until keys and metric bases are available
@@ -126,10 +129,16 @@ function App() {
     } catch {}
   }, [savedSuites])
 
+  const allFolders = useMemo(() => {
+    return [ ...(manifest?.folders ?? []), ...uploadedFolders ]
+  }, [manifest, uploadedFolders])
+
   const totals = useMemo(() => {
-    const totalFiles = manifest?.folders.reduce((acc, f) => acc + f.files.length, 0) ?? 0
+    const totalFromManifest = manifest?.folders.reduce((acc, f) => acc + f.files.length, 0) ?? 0
+    const totalFromUploaded = uploadedFolders.reduce((acc, f) => acc + f.files.length, 0)
+    const totalFiles = totalFromManifest + totalFromUploaded
     return { totalFiles, selected: selected.size }
-  }, [manifest, selected])
+  }, [manifest, uploadedFolders, selected])
 
   function toggleFile(path: string, checked: boolean) {
     setSelected((prev) => {
@@ -141,8 +150,7 @@ function App() {
   }
 
   function toggleFolder(folderName: string, checked: boolean) {
-    if (!manifest) return
-    const folder = manifest.folders.find((f) => f.name === folderName)
+    const folder = allFolders.find((f) => f.name === folderName)
     if (!folder) return
     setSelected((prev) => {
       const next = new Set(prev)
@@ -155,19 +163,56 @@ function App() {
   }
 
   function isFolderFullySelected(folderName: string): boolean {
-    if (!manifest) return false
-    const folder = manifest.folders.find((f) => f.name === folderName)
+    const folder = allFolders.find((f) => f.name === folderName)
     if (!folder || folder.files.length === 0) return false
     return folder.files.every((f) => selected.has(f.path))
   }
 
   function isFolderPartiallySelected(folderName: string): boolean {
-    if (!manifest) return false
-    const folder = manifest.folders.find((f) => f.name === folderName)
+    const folder = allFolders.find((f) => f.name === folderName)
     if (!folder || folder.files.length === 0) return false
     const some = folder.files.some((f) => selected.has(f.path))
     const all = folder.files.every((f) => selected.has(f.path))
     return some && !all
+  }
+
+  // Handle directory upload (client-side)
+  async function handleUploadDir(files: FileList | null) {
+    if (!files || files.length === 0) return
+    // Group json files by top-level folder name from webkitRelativePath
+    const items = Array.from(files).filter((f) => f.name.toLowerCase().endsWith('.json'))
+    if (items.length === 0) { message.warning('No JSON files found in selected directory'); return }
+    type Group = { name: string; files: { name: string; path: string }[] }
+    const byFolder = new Map<string, Group>()
+    // Read all files
+    const loadedEntries: Record<string, LoadedFile> = {}
+    for (const f of items) {
+      const rel = (f as any).webkitRelativePath as string | undefined
+      const topFolder = rel ? rel.split('/')[0] : 'uploaded'
+      const folderKey = `Uploaded/${topFolder}`
+      if (!byFolder.has(folderKey)) byFolder.set(folderKey, { name: folderKey, files: [] })
+      const text = await f.text().catch(() => null)
+      if (!text) continue
+      try {
+        const json = JSON.parse(text)
+        const hasData = json && typeof json.data === 'object' && json.data !== null
+        const displayName = typeof json?.name === 'string' && json.name.trim() ? json.name.trim() : f.name
+        // Build a virtual path for this uploaded file
+        const vpathBase = `uploaded://${topFolder}/${f.name}`
+        let vpath = vpathBase
+        let counter = 1
+        while (loadedEntries[vpath] || filesCache[vpath]) { vpath = `${vpathBase}#${counter++}` }
+        loadedEntries[vpath] = { path: vpath, name: displayName, data: json?.data, valid: !!hasData, error: hasData ? undefined : 'Missing or invalid "data" key' }
+        byFolder.get(folderKey)!.files.push({ name: f.name, path: vpath })
+      } catch (e) {
+        // skip bad json
+      }
+    }
+    if (Object.keys(loadedEntries).length === 0) { message.error('Failed to parse any JSON files from the folder'); return }
+    // Update caches and uploaded folders
+    setFilesCache((prev) => ({ ...prev, ...loadedEntries }))
+    setUploadedFolders((prev) => ([ ...prev, ...Array.from(byFolder.values()) ]))
+    message.success(`Imported ${Object.keys(loadedEntries).length} file(s) from ${byFolder.size} folder(s)`) 
   }
 
   // Build a saved suite object from current UI state
@@ -340,17 +385,30 @@ function App() {
       const m = manifest!
       setGlobalMetricUnion({})
       const allEntries: { path: string }[] = []
+      // include manifest folders
       for (const folder of m.folders) {
         for (const file of folder.files) {
+          allEntries.push({ path: file.path })
+        }
+      }
+      // include uploaded folders
+      for (const uf of uploadedFolders) {
+        for (const file of uf.files) {
           allEntries.push({ path: file.path })
         }
       }
       for (const entry of allEntries) {
         if (cancelled) break
         try {
-          const res = await fetch(entry.path)
-          if (!res.ok) continue
-          const data = await res.json()
+          let data: any | null = null
+          const cached = filesCache[entry.path]
+          if (cached) {
+            data = { data: cached.data }
+          } else {
+            const res = await fetch(entry.path)
+            if (!res.ok) continue
+            data = await res.json()
+          }
           const d = data?.data
           if (!d || typeof d !== 'object') continue
           const keys = Object.keys(d)
@@ -373,7 +431,7 @@ function App() {
     }
     scanAll()
     return () => { cancelled = true }
-  }, [manifest])
+  }, [manifest, uploadedFolders, filesCache])
 
   // Helpers
   const getMetricUnion = (key: string) => {
@@ -428,6 +486,11 @@ function App() {
 
   // ----- Visual Comparison (D3 Line Charts) -----
   const [diagramSections, setDiagramSections] = useState<DiagramSpec[]>([{ key: null, metricBase: null }])
+  const [previewHighlight, setPreviewHighlight] = useState<string | null>(null)
+  const previewSeries = useMemo(() => {
+    if (!previewDiagram || !previewDiagram.key || !previewDiagram.metricBase) return [] as Series[]
+    return buildChartSeries(previewDiagram.key, previewDiagram.metricBase)
+  }, [previewDiagram, selected, filesCache])
 
   // Metric parsing helpers for charting
   // parseMetricName imported from utils
@@ -459,14 +522,21 @@ function App() {
     pendingSuiteDiagramsRef.current = null
   }, [commonDataKeys, selected, filesCache])
  
+  // Distinct color generator per chart to avoid duplicates
+  function colorForIndex(idx: number, total: number) {
+    const hue = Math.round((idx * 360) / Math.max(1, total))
+    const sat = 70
+    const light = isDark ? 60 : 45
+    return `hsl(${hue}, ${sat}%, ${light}%)`
+  }
 
   function buildChartSeries(key: string, metricBase: string): Series[] {
     const sel = Array.from(selected)
     const validFiles = sel
       .map((p) => filesCache[p])
       .filter((f): f is LoadedFile => !!f && f.valid)
-    const palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
     const series: Series[] = []
+    const total = validFiles.length
     validFiles.forEach((f, idx) => {
       const map = buildMetricMap(key, f.data?.[key])
       const points: { k: number; value: number }[] = []
@@ -478,7 +548,10 @@ function App() {
         }
       }
       points.sort((a, b) => a.k - b.k)
-      if (points.length > 0) series.push({ name: f.name || f.path, color: palette[idx % palette.length], points })
+      if (points.length > 0) {
+        const color = colorForIndex(idx, total)
+        series.push({ name: f.name || f.path, color, points })
+      }
     })
     return series
   }
@@ -813,12 +886,37 @@ function App() {
             header={
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: isDark ? '#fff' : '#000' }}>
                 <span style={{ fontWeight: 600 }}>JSON Visualizer — File Selection</span>
-                <span style={{ fontSize: 12, opacity: 0.85 }}>
-                  {totals.selected} selected / {totals.totalFiles} files
-                  {manifest?.generatedAt && (
-                    <span style={{ marginLeft: 12 }}>manifest: {new Date(manifest.generatedAt).toLocaleString()}</span>
-                  )}
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <span style={{ fontSize: 12, opacity: 0.85 }}>
+                    {totals.selected} selected / {totals.totalFiles} files
+                    {manifest?.generatedAt && (
+                      <span style={{ marginLeft: 12 }}>manifest: {new Date(manifest.generatedAt).toLocaleString()}</span>
+                    )}
+                  </span>
+                  {/* Hidden directory input */}
+                  <input
+                    type="file"
+                    multiple
+                    accept=".json,application/json"
+                    ref={(el) => {
+                      uploadInputRef.current = el
+                      if (el) {
+                        el.setAttribute('webkitdirectory', '')
+                        el.setAttribute('directory', '')
+                        el.setAttribute('mozdirectory', '')
+                      }
+                    }}
+                    onChange={(e) => {
+                      handleUploadDir(e.target.files)
+                      // reset so the same folder can be chosen again
+                      e.currentTarget.value = ''
+                    }}
+                    style={{ display: 'none' }}
+                  />
+                  <Button size="small" onClick={() => uploadInputRef.current?.click()}>
+                    Upload folder…
+                  </Button>
+                </div>
               </div>
             }
           >
@@ -829,15 +927,16 @@ function App() {
               </div>
             )}
 
-            {!loading && !error && manifest && manifest.folders.length === 0 && (
+            {!loading && !error && (allFolders.length === 0) && (
               <div style={{ color: '#555' }}>
-                No folders found in <code>public/results/</code>. Add date folders with JSON files and rerun <code>npm run gen:manifest</code>.
+                No folders found. You can either add date folders with JSON files under <code>public/results/</code> and rerun <code>npm run gen:manifest</code>,
+                or use the <em>Upload folder…</em> button to import benchmark results from your disk.
               </div>
             )}
 
-            {!loading && !error && manifest && (
+            {!loading && !error && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                {manifest.folders.map((folder) => (
+                {allFolders.map((folder) => (
                   <div key={folder.name} style={{ border: '1px solid #e3e3e3', borderRadius: 8, padding: 12 }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1294,37 +1393,54 @@ function App() {
       {/* Diagram Preview Modal */}
       <Modal
         open={!!previewDiagram}
-        onCancel={() => setPreviewDiagram(null)}
+        onCancel={() => { setPreviewDiagram(null); setPreviewHighlight(null) }}
         footer={null}
         width={1200}
         bodyStyle={{ maxHeight: '80vh', overflow: 'auto' }}
         title={previewDiagram ? <ChartInfo k={previewDiagram.key} metricBase={previewDiagram.metricBase} /> : 'Diagram Preview'}
       >
         {previewDiagram ? (
-          (() => {
-            const s = buildChartSeries(previewDiagram.key, previewDiagram.metricBase)
-            return s.length > 0 ? (
-              <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
-                <div>
-                  <LineChart series={s} width={900} height={520} isDark={isDark} />
-                </div>
-                <div style={{ minWidth: 280 }}>
-                  <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-                    {s.map((item) => (
-                      <li key={`preview-legend-${item.name}`} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                        <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 6, background: item.color }} />
-                        <Tooltip title={item.name}>
-                          <span style={{ display: 'inline-block', whiteSpace: 'normal', wordBreak: 'break-word' }}>{item.name}</span>
-                        </Tooltip>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-            ) : (
-              <div style={{ color: isDark ? '#aaa' : '#888' }}>No data to display.</div>
-            )
-          })()
+          <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+            <div>
+              <LineChart
+                series={previewSeries}
+                width={900}
+                height={520}
+                isDark={isDark}
+                highlightedSeries={previewHighlight}
+                xLabel="k"
+                yLabel={previewDiagram.metricBase || 'value'}
+              />
+            </div>
+            <div style={{ minWidth: 280 }}>
+              <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                {previewSeries.map((item) => (
+                  <li
+                    key={`preview-legend-${item.name}`}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}
+                    onMouseEnter={() => setPreviewHighlight(item.name)}
+                    onMouseLeave={() => setPreviewHighlight(null)}
+                  >
+                    <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 6, background: item.color }} />
+                    <Tooltip
+                      title={
+                        <div>
+                          <div style={{ fontWeight: 600, marginBottom: 4 }}>{item.name}</div>
+                          <div>
+                            {item.points.map((p) => (
+                              <div key={`tt-${item.name}-${p.k}`}>k={p.k}, {previewDiagram.metricBase}: {Number(p.value).toFixed(5)}</div>
+                            ))}
+                          </div>
+                        </div>
+                      }
+                    >
+                      <span style={{ display: 'inline-block', whiteSpace: 'normal', wordBreak: 'break-word' }}>{item.name}</span>
+                    </Tooltip>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
         ) : null}
       </Modal>
       {/* Filter Add/Edit Modal */}
