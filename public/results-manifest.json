@@ -1,7 +1,68 @@
 {
   "root": "results",
-  "generatedAt": "2025-08-13T05:36:18.010Z",
+  "generatedAt": "2025-08-13T10:10:34.463Z",
   "folders": [
+    {
+      "name": "2025-08-13",
+      "files": [
+        {
+          "name": "bert_-_custom_wordtokens.json",
+          "path": "/results/2025-08-13/bert_-_custom_wordtokens.json"
+        },
+        {
+          "name": "bert-base.json",
+          "path": "/results/2025-08-13/bert-base.json"
+        },
+        {
+          "name": "bm25-weaviate.json",
+          "path": "/results/2025-08-13/bm25-weaviate.json"
+        },
+        {
+          "name": "colbert.json",
+          "path": "/results/2025-08-13/colbert.json"
+        },
+        {
+          "name": "e5_base_ANN_qdrant.json",
+          "path": "/results/2025-08-13/e5_base_ANN_qdrant.json"
+        },
+        {
+          "name": "e5_base_exact_qdrant.json",
+          "path": "/results/2025-08-13/e5_base_exact_qdrant.json"
+        },
+        {
+          "name": "e5_large_exact_qdrant.json",
+          "path": "/results/2025-08-13/e5_large_exact_qdrant.json"
+        },
+        {
+          "name": "e5-base-weaviate-pf.json",
+          "path": "/results/2025-08-13/e5-base-weaviate-pf.json"
+        },
+        {
+          "name": "e5-base-weaviate.json",
+          "path": "/results/2025-08-13/e5-base-weaviate.json"
+        },
+        {
+          "name": "flair_-_wordtoken_bert.json",
+          "path": "/results/2025-08-13/flair_-_wordtoken_bert.json"
+        },
+        {
+          "name": "hybrid-weaviate-a0.3_0.3.json",
+          "path": "/results/2025-08-13/hybrid-weaviate-a0.3_0.3.json"
+        },
+        {
+          "name": "hybrid-weaviate-a0.5_0.5.json",
+          "path": "/results/2025-08-13/hybrid-weaviate-a0.5_0.5.json"
+        },
+        {
+          "name": "uws-and.json",
+          "path": "/results/2025-08-13/uws-and.json"
+        },
+        {
+          "name": "uws-or.json",
+          "path": "/results/2025-08-13/uws-or.json"
+        }
+      ]
+    },
     {
       "name": "2025-08-10",
       "files": [

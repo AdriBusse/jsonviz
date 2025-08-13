@@ -21,6 +21,8 @@ function App() {
   const [dataKeySections, setDataKeySections] = useState<(string | null)[]>([null])
   const selectionRef = useRef<HTMLDivElement | null>(null)
   const diagramSvgRefs = useRef<Record<number, SVGSVGElement | null>>({})
+  // Diagram preview modal state
+  const [previewDiagram, setPreviewDiagram] = useState<{ key: string; metricBase: string } | null>(null)
   // Saved reusable filters (initialize from localStorage to avoid first-render overwrite)
   const [savedFilters, setSavedFilters] = useState<SavedFilter[]>(() => {
     try {
@@ -1252,9 +1254,14 @@ function App() {
                             )}
                             {spec.key && spec.metricBase && series.length > 0 && (
                               <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12, alignItems: 'flex-start' }}>
-                                <div>
-                                  <LineChart series={series} width={280} height={200} isDark={isDark} exportRef={(el: SVGSVGElement | null) => { diagramSvgRefs.current[idx] = el }} />
-                                </div>
+                                <Tooltip title="Click to enlarge">
+                                  <div
+                                    onClick={() => setPreviewDiagram({ key: spec.key!, metricBase: spec.metricBase! })}
+                                    style={{ cursor: 'zoom-in' }}
+                                  >
+                                    <LineChart series={series} width={280} height={200} isDark={isDark} exportRef={(el: SVGSVGElement | null) => { diagramSvgRefs.current[idx] = el }} />
+                                  </div>
+                                </Tooltip>
                                 <div style={{ minWidth: 120 }}>
                                   <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
                                     {series.map((s) => (
@@ -1283,6 +1290,43 @@ function App() {
         />
 
       </section>
+      {/* Filter Add/Edit Modal */}
+      {/* Diagram Preview Modal */}
+      <Modal
+        open={!!previewDiagram}
+        onCancel={() => setPreviewDiagram(null)}
+        footer={null}
+        width={1200}
+        bodyStyle={{ maxHeight: '80vh', overflow: 'auto' }}
+        title={previewDiagram ? <ChartInfo k={previewDiagram.key} metricBase={previewDiagram.metricBase} /> : 'Diagram Preview'}
+      >
+        {previewDiagram ? (
+          (() => {
+            const s = buildChartSeries(previewDiagram.key, previewDiagram.metricBase)
+            return s.length > 0 ? (
+              <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+                <div>
+                  <LineChart series={s} width={900} height={520} isDark={isDark} />
+                </div>
+                <div style={{ minWidth: 280 }}>
+                  <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                    {s.map((item) => (
+                      <li key={`preview-legend-${item.name}`} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                        <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 6, background: item.color }} />
+                        <Tooltip title={item.name}>
+                          <span style={{ display: 'inline-block', whiteSpace: 'normal', wordBreak: 'break-word' }}>{item.name}</span>
+                        </Tooltip>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            ) : (
+              <div style={{ color: isDark ? '#aaa' : '#888' }}>No data to display.</div>
+            )
+          })()
+        ) : null}
+      </Modal>
       {/* Filter Add/Edit Modal */}
       <Modal
         open={filterModalOpen}
