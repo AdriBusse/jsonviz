@@ -18,6 +18,18 @@ export type SavedFilter = {
   rows: string[]
 }
 
+export type SavedPareto = {
+  baseline: string | null
+  variant: string | null
+  categories: string[]
+  metricBase: string | null
+  k: number | null
+  showFrontier: boolean
+  showDiagonal: boolean
+  maximizeX: boolean
+  maximizeY: boolean
+}
+
 export type SavedSuite = {
   id: string
   name: string
@@ -27,6 +39,7 @@ export type SavedSuite = {
   sectionFilters: Record<number, string | null>
   sectionRows: Record<number, string[]>
   diagramSections?: { key: string; metricBase: string }[]
+  pareto?: SavedPareto
 }
 
 export type DiagramSpec = { key: string | null; metricBase: string | null }

@@ -19,6 +19,7 @@ type Props = {
   showDiagonal?: boolean
   maximizeX?: boolean
   maximizeY?: boolean
+  exportRef?: (el: SVGSVGElement | null) => void
 }
 
 export default function ParetoChart({
@@ -32,6 +33,7 @@ export default function ParetoChart({
   showDiagonal = true,
   maximizeX = true,
   maximizeY = true,
+  exportRef,
 }: Props) {
   const ref = useRef<SVGSVGElement | null>(null)
 
@@ -57,17 +59,9 @@ export default function ParetoChart({
       return
     }
 
-    const xs = points.map((p) => p.x)
-    const ys = points.map((p) => p.y)
-    const xExtent = d3.extent(xs) as [number, number]
-    const yExtent = d3.extent(ys) as [number, number]
-
-    // Add small padding
-    const padX = (xExtent[1] - xExtent[0]) * 0.05 || 0.05
-    const padY = (yExtent[1] - yExtent[0]) * 0.05 || 0.05
-
-    const x = d3.scaleLinear().domain([xExtent[0] - padX, xExtent[1] + padX]).nice().range([0, innerW])
-    const y = d3.scaleLinear().domain([yExtent[0] - padY, yExtent[1] + padY]).nice().range([innerH, 0])
+    // Fixed axes to [0, 1] for consistent comparison across charts
+    const x = d3.scaleLinear().domain([0, 1]).range([0, innerW])
+    const y = d3.scaleLinear().domain([0, 1]).range([innerH, 0])
 
     const xAxis = d3.axisBottom(x).ticks(6)
     const yAxis = d3.axisLeft(y).ticks(6)
@@ -207,6 +201,12 @@ export default function ParetoChart({
       tooltip.remove()
     }
   }, [points, width, height, isDark, xLabel, yLabel, showFrontier, showDiagonal, maximizeX, maximizeY])
+
+  // Expose SVG element to parent for export
+  useEffect(() => {
+    exportRef?.(ref.current)
+    return () => exportRef?.(null)
+  }, [exportRef, ref.current])
 
   return <svg ref={ref} />
 }

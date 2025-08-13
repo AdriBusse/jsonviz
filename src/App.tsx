@@ -22,6 +22,7 @@ function App() {
   const [dataKeySections, setDataKeySections] = useState<(string | null)[]>([null])
   const selectionRef = useRef<HTMLDivElement | null>(null)
   const diagramSvgRefs = useRef<Record<number, SVGSVGElement | null>>({})
+  const paretoSvgRef = useRef<SVGSVGElement | null>(null)
   // Diagram preview modal state
   const [previewDiagram, setPreviewDiagram] = useState<{ key: string; metricBase: string } | null>(null)
   // Saved reusable filters (initialize from localStorage to avoid first-render overwrite)
@@ -39,6 +40,144 @@ function App() {
     } catch {}
     return []
   })
+
+  // Export Pareto chart (SVG)
+  function downloadParetoSvg() {
+    const src = paretoSvgRef.current
+    if (!src) { message.error('Pareto chart not ready to export'); return }
+    const NS = 'http://www.w3.org/2000/svg'
+    const bName = paretoBaseline ? (filesCache[paretoBaseline]?.name || paretoBaseline) : 'baseline'
+    const vName = paretoVariant ? (filesCache[paretoVariant]?.name || paretoVariant) : 'variant'
+    const titleText = `Pareto: ${paretoMetricBase ?? ''}${paretoK != null ? `@${paretoK}` : ''} — X: ${bName} vs Y: ${vName}`
+    const margin = 16
+    const titleFontSize = 14
+    const titleHeight = titleFontSize + 8
+    const chartW = 900
+    const chartH = 520
+    const totalW = margin + chartW + margin
+    const totalH = margin + titleHeight + chartH + margin
+    const outSvg = document.createElementNS(NS, 'svg')
+    outSvg.setAttribute('xmlns', NS)
+    outSvg.setAttribute('width', String(totalW))
+    outSvg.setAttribute('height', String(totalH))
+    const bg = document.createElementNS(NS, 'rect')
+    bg.setAttribute('x', '0')
+    bg.setAttribute('y', '0')
+    bg.setAttribute('width', String(totalW))
+    bg.setAttribute('height', String(totalH))
+    bg.setAttribute('fill', isDark ? '#111' : '#ffffff')
+    outSvg.appendChild(bg)
+    const title = document.createElementNS(NS, 'text')
+    title.setAttribute('x', String(margin))
+    title.setAttribute('y', String(margin + titleFontSize))
+    title.setAttribute('font-size', String(titleFontSize))
+    title.setAttribute('font-family', 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif')
+    title.setAttribute('fill', isDark ? '#ddd' : '#333')
+    title.textContent = titleText
+    outSvg.appendChild(title)
+    const chartGroup = document.createElementNS(NS, 'g')
+    chartGroup.setAttribute('transform', `translate(${margin}, ${margin + titleHeight})`)
+    const cloned = src.cloneNode(true) as SVGSVGElement
+    cloned.removeAttribute('width')
+    cloned.removeAttribute('height')
+    const wrap = document.createElementNS(NS, 'g')
+    while (cloned.firstChild) wrap.appendChild(cloned.firstChild)
+    chartGroup.appendChild(wrap)
+    outSvg.appendChild(chartGroup)
+    const xml = new XMLSerializer().serializeToString(outSvg)
+    const blob = new Blob([xml], { type: 'image/svg+xml;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const compName = (activeSuiteId && savedSuites.find((x) => x.id === activeSuiteId)?.name) || 'comparison'
+    const file = sanitizeFilename(`${compName}_pareto_${paretoMetricBase ?? 'metric'}${paretoK != null ? `@${paretoK}` : ''}.svg`)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = file
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  // Export Pareto chart (PNG)
+  function downloadParetoPng(useDarkBg: boolean) {
+    const src = paretoSvgRef.current
+    if (!src) { message.error('Pareto chart not ready to export'); return }
+    const NS = 'http://www.w3.org/2000/svg'
+    const bName = paretoBaseline ? (filesCache[paretoBaseline]?.name || paretoBaseline) : 'baseline'
+    const vName = paretoVariant ? (filesCache[paretoVariant]?.name || paretoVariant) : 'variant'
+    const titleText = `Pareto: ${paretoMetricBase ?? ''}${paretoK != null ? `@${paretoK}` : ''} — X: ${bName} vs Y: ${vName}`
+    const margin = 16
+    const titleFontSize = 14
+    const titleHeight = titleFontSize + 8
+    const chartW = 900
+    const chartH = 520
+    const totalW = margin + chartW + margin
+    const totalH = margin + titleHeight + chartH + margin
+    const outSvg = document.createElementNS(NS, 'svg')
+    outSvg.setAttribute('xmlns', NS)
+    outSvg.setAttribute('width', String(totalW))
+    outSvg.setAttribute('height', String(totalH))
+    const bg = document.createElementNS(NS, 'rect')
+    bg.setAttribute('x', '0')
+    bg.setAttribute('y', '0')
+    bg.setAttribute('width', String(totalW))
+    bg.setAttribute('height', String(totalH))
+    bg.setAttribute('fill', useDarkBg ? '#111' : '#ffffff')
+    outSvg.appendChild(bg)
+    const title = document.createElementNS(NS, 'text')
+    title.setAttribute('x', String(margin))
+    title.setAttribute('y', String(margin + titleFontSize))
+    title.setAttribute('font-size', String(titleFontSize))
+    title.setAttribute('font-family', 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif')
+    title.setAttribute('fill', useDarkBg ? '#ddd' : '#333')
+    title.textContent = titleText
+    outSvg.appendChild(title)
+    const chartGroup = document.createElementNS(NS, 'g')
+    chartGroup.setAttribute('transform', `translate(${margin}, ${margin + titleHeight})`)
+    const cloned = src.cloneNode(true) as SVGSVGElement
+    cloned.removeAttribute('width')
+    cloned.removeAttribute('height')
+    const wrap = document.createElementNS(NS, 'g')
+    while (cloned.firstChild) wrap.appendChild(cloned.firstChild)
+    // Adjust axis colors for background contrast
+    const axisText = wrap.querySelectorAll<SVGTextElement>('.tick text')
+    axisText.forEach((t) => t.setAttribute('fill', useDarkBg ? '#ddd' : '#333'))
+    const domainLines = wrap.querySelectorAll<SVGPathElement>('.domain')
+    domainLines.forEach((d) => { d.setAttribute('stroke', useDarkBg ? '#ddd' : '#333'); (d as any).style.opacity = '0.4' })
+    const tickLines = wrap.querySelectorAll<SVGLineElement>('.tick line')
+    tickLines.forEach((l) => { l.setAttribute('stroke', useDarkBg ? '#ddd' : '#333'); (l as any).style.opacity = '0.2' })
+    chartGroup.appendChild(wrap)
+    outSvg.appendChild(chartGroup)
+    const xml = new XMLSerializer().serializeToString(outSvg)
+    const svgUrl = URL.createObjectURL(new Blob([xml], { type: 'image/svg+xml;charset=utf-8' }))
+    const img = new Image()
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = totalW
+      canvas.height = totalH
+      const ctx = canvas.getContext('2d')
+      if (!ctx) { URL.revokeObjectURL(svgUrl); message.error('Canvas not supported'); return }
+      ctx.fillStyle = useDarkBg ? '#111' : '#ffffff'
+      ctx.fillRect(0, 0, totalW, totalH)
+      ctx.drawImage(img, 0, 0)
+      canvas.toBlob((blob) => {
+        if (!blob) { URL.revokeObjectURL(svgUrl); message.error('Failed to export PNG'); return }
+        const url = URL.createObjectURL(blob)
+        const compName = (activeSuiteId && savedSuites.find((x) => x.id === activeSuiteId)?.name) || 'comparison'
+        const file = sanitizeFilename(`${compName}_pareto_${paretoMetricBase ?? 'metric'}${paretoK != null ? `@${paretoK}` : ''}.png`)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = file
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        URL.revokeObjectURL(url)
+        URL.revokeObjectURL(svgUrl)
+      }, 'image/png')
+    }
+    img.onerror = () => { URL.revokeObjectURL(svgUrl); message.error('Failed to render PNG') }
+    img.src = svgUrl
+  }
   // Comparison suites (saved app state)
   const [savedSuites, setSavedSuites] = useState<SavedSuite[]>(() => {
     try {
@@ -259,6 +398,17 @@ function App() {
       sectionFilters: compactFilters,
       sectionRows: compactRows,
       diagramSections: diagramsCompact,
+      pareto: {
+        baseline: paretoBaseline,
+        variant: paretoVariant,
+        categories: paretoCategories,
+        metricBase: paretoMetricBase,
+        k: paretoK,
+        showFrontier: paretoShowFrontier,
+        showDiagonal: paretoShowDiagonal,
+        maximizeX: paretoMaximizeX,
+        maximizeY: paretoMaximizeY,
+      },
     }
   }
 
@@ -274,6 +424,18 @@ function App() {
     // show a clean placeholder until diagrams can be applied
     setDiagramSections([{ key: null, metricBase: null }])
     setActiveSuiteId(suite.id)
+    // Apply Pareto settings if present
+    if (suite.pareto) {
+      setParetoBaseline(suite.pareto.baseline ?? null)
+      setParetoVariant(suite.pareto.variant ?? null)
+      setParetoCategories(Array.isArray(suite.pareto.categories) ? suite.pareto.categories : [])
+      setParetoMetricBase(suite.pareto.metricBase ?? null)
+      setParetoK(suite.pareto.k ?? null)
+      setParetoShowFrontier(!!suite.pareto.showFrontier)
+      setParetoShowDiagonal(!!suite.pareto.showDiagonal)
+      setParetoMaximizeX(!!suite.pareto.maximizeX)
+      setParetoMaximizeY(!!suite.pareto.maximizeY)
+    }
     message.success(`Loaded "${suite.name}"`)
   }
 
@@ -1097,96 +1259,7 @@ function App() {
         </Collapse>
       </section>
 
-      {/* Pareto Frontier (separate area) */}
-      <section style={{ margin: '24px 0' }}>
-        <Divider orientation="left">Pareto Frontier Comparison</Divider>
-        <Space direction="vertical" style={{ width: '100%' }} size={12}>
-          <Space wrap>
-            <div>
-              <div style={{ marginBottom: 4 }}>Baseline method</div>
-              <Select
-                style={{ width: 280 }}
-                placeholder="Select baseline"
-                value={paretoBaseline ?? undefined}
-                onChange={(v) => setParetoBaseline(v)}
-                options={selectedValidFiles.map((f) => ({ label: f.name || f.path, value: f.path }))}
-              />
-            </div>
-            <div>
-              <div style={{ marginBottom: 4 }}>Variant method</div>
-              <Select
-                style={{ width: 280 }}
-                placeholder="Select variant"
-                value={paretoVariant ?? undefined}
-                onChange={(v) => setParetoVariant(v)}
-                options={selectedValidFiles.map((f) => ({ label: f.name || f.path, value: f.path }))}
-              />
-            </div>
-            <div>
-              <div style={{ marginBottom: 4 }}>Categories</div>
-              <Select
-                mode="multiple"
-                style={{ minWidth: 360 }}
-                placeholder="Select categories (data keys)"
-                value={paretoCategories}
-                onChange={(vals) => setParetoCategories(vals)}
-                options={commonDataKeys.map((k) => ({ label: k, value: k }))}
-              />
-            </div>
-          </Space>
-          <Space wrap>
-            <div>
-              <div style={{ marginBottom: 4 }}>Metric</div>
-              <Select
-                style={{ width: 200 }}
-                placeholder="Metric base"
-                value={paretoMetricBase ?? undefined}
-                onChange={(v) => { setParetoMetricBase(v); setParetoK(null) }}
-                options={paretoMetricBases.map((b) => ({ label: b, value: b }))}
-              />
-              <Select
-                style={{ width: 160, marginLeft: 8 }}
-                placeholder="k"
-                value={paretoK ?? undefined}
-                onChange={(v) => setParetoK(v)}
-                options={paretoKs.map((k) => ({ label: String(k), value: k }))}
-              />
-            </div>
-            <div>
-              <div style={{ marginBottom: 4 }}>Display</div>
-              <Space>
-                <span>Frontier</span>
-                <Switch checked={paretoShowFrontier} onChange={setParetoShowFrontier} />
-                <span>Diagonal</span>
-                <Switch checked={paretoShowDiagonal} onChange={setParetoShowDiagonal} />
-                <span>Maximize X</span>
-                <Switch checked={paretoMaximizeX} onChange={setParetoMaximizeX} />
-                <span>Maximize Y</span>
-                <Switch checked={paretoMaximizeY} onChange={setParetoMaximizeY} />
-              </Space>
-            </div>
-          </Space>
-          <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'start', gap: 12 }}>
-            <div style={{ color: isDark ? '#aaa' : '#666', maxWidth: 320, fontSize: 12 }}>
-              Compare categories by plotting baseline (X) vs variant (Y) for the selected metric and k. Points above the diagonal favor the variant.
-            </div>
-            <div>
-              <ParetoChart
-                points={paretoPoints}
-                width={900}
-                height={520}
-                isDark={isDark}
-                xLabel={paretoMetricBase && paretoK != null ? `${paretoMetricBase}@${paretoK} (baseline)` : 'baseline'}
-                yLabel={paretoMetricBase && paretoK != null ? `${paretoMetricBase}@${paretoK} (variant)` : 'variant'}
-                showFrontier={paretoShowFrontier}
-                showDiagonal={paretoShowDiagonal}
-                maximizeX={paretoMaximizeX}
-                maximizeY={paretoMaximizeY}
-              />
-            </div>
-          </div>
-        </Space>
-      </section>
+      {/* Pareto integrated into Tabs below */}
 
       <section>
         <h2 style={{ marginBottom: 8 }}>Preview & Compare</h2>
@@ -1248,7 +1321,7 @@ function App() {
           </Popconfirm>
         </div>
 
-        {/* Tabs: Tables and Diagrams */}
+        {/* Tabs: Tables, Diagrams and Pareto */}
         <Tabs
           items={[
             {
@@ -1583,6 +1656,120 @@ function App() {
                       })}
                     </div>
                   )}
+                </>
+              ),
+            },
+            {
+              key: 'pareto',
+              label: <span style={{ color: isDark ? '#fff' : '#000' }}>Pareto</span>,
+              children: (
+                <>
+                  <Divider orientation="left">Pareto Frontier Comparison</Divider>
+                  <Space direction="vertical" style={{ width: '100%' }} size={12}>
+                    <Space wrap>
+                      <div>
+                        <div style={{ marginBottom: 4 }}>Baseline method</div>
+                        <Select
+                          style={{ width: 280 }}
+                          placeholder="Select baseline"
+                          value={paretoBaseline ?? undefined}
+                          onChange={(v) => setParetoBaseline(v)}
+                          options={selectedValidFiles.map((f) => ({ label: f.name || f.path, value: f.path }))}
+                        />
+                      </div>
+                      <div>
+                        <div style={{ marginBottom: 4 }}>Variant method</div>
+                        <Select
+                          style={{ width: 280 }}
+                          placeholder="Select variant"
+                          value={paretoVariant ?? undefined}
+                          onChange={(v) => setParetoVariant(v)}
+                          options={selectedValidFiles.map((f) => ({ label: f.name || f.path, value: f.path }))}
+                        />
+                      </div>
+                      <div>
+                        <div style={{ marginBottom: 4 }}>Categories</div>
+                        <Select
+                          mode="multiple"
+                          style={{ minWidth: 360 }}
+                          placeholder="Select categories (data keys)"
+                          value={paretoCategories}
+                          onChange={(vals) => setParetoCategories(vals)}
+                          options={commonDataKeys.map((k) => ({ label: k, value: k }))}
+                        />
+                      </div>
+                    </Space>
+                    <Space wrap>
+                      <div>
+                        <div style={{ marginBottom: 4 }}>Metric</div>
+                        <Select
+                          style={{ width: 200 }}
+                          placeholder="Metric base"
+                          value={paretoMetricBase ?? undefined}
+                          onChange={(v) => { setParetoMetricBase(v); setParetoK(null) }}
+                          options={paretoMetricBases.map((b) => ({ label: b, value: b }))}
+                        />
+                        <Select
+                          style={{ width: 160, marginLeft: 8 }}
+                          placeholder="k"
+                          value={paretoK ?? undefined}
+                          onChange={(v) => setParetoK(v)}
+                          options={paretoKs.map((k) => ({ label: String(k), value: k }))}
+                        />
+                      </div>
+                      <div>
+                        <div style={{ marginBottom: 4 }}>Display</div>
+                        <Space>
+                          <span>Frontier</span>
+                          <Switch checked={paretoShowFrontier} onChange={setParetoShowFrontier} />
+                          <span>Diagonal</span>
+                          <Switch checked={paretoShowDiagonal} onChange={setParetoShowDiagonal} />
+                          <span>Maximize X</span>
+                          <Switch checked={paretoMaximizeX} onChange={setParetoMaximizeX} />
+                          <span>Maximize Y</span>
+                          <Switch checked={paretoMaximizeY} onChange={setParetoMaximizeY} />
+                        </Space>
+                      </div>
+                      <div style={{ marginLeft: 'auto' }}>
+                        <Dropdown
+                          menu={{
+                            items: [
+                              { key: 'png-light', label: 'PNG (Light bg)' },
+                              { key: 'png-dark', label: 'PNG (Dark bg)' },
+                              { key: 'svg', label: 'SVG' },
+                            ],
+                            onClick: ({ key }) => {
+                              if (key === 'png-light') downloadParetoPng(false)
+                              else if (key === 'png-dark') downloadParetoPng(true)
+                              else if (key === 'svg') downloadParetoSvg()
+                            },
+                          }}
+                        >
+                          <Button size="middle" icon={<DownloadOutlined />}>Download</Button>
+                        </Dropdown>
+                      </div>
+                    </Space>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'start', gap: 12 }}>
+                      <div style={{ color: isDark ? '#aaa' : '#666', maxWidth: 320, fontSize: 12 }}>
+                        Compare categories by plotting baseline (X) vs variant (Y) for the selected metric and k. Points above the diagonal favor the variant.
+                      </div>
+                      <div>
+                        <ParetoChart
+                          points={paretoPoints}
+                          width={900}
+                          height={520}
+                          isDark={isDark}
+                          xLabel={paretoMetricBase && paretoK != null ? `${paretoMetricBase}@${paretoK} (baseline)` : 'baseline'}
+                          yLabel={paretoMetricBase && paretoK != null ? `${paretoMetricBase}@${paretoK} (variant)` : 'variant'}
+                          showFrontier={paretoShowFrontier}
+                          showDiagonal={paretoShowDiagonal}
+                          maximizeX={paretoMaximizeX}
+                          maximizeY={paretoMaximizeY}
+                          exportRef={(el: SVGSVGElement | null) => { paretoSvgRef.current = el }}
+                        />
+                      </div>
+                    </div>
+                  </Space>
                 </>
               ),
             },
