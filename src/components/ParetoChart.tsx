@@ -59,9 +59,23 @@ export default function ParetoChart({
       return
     }
 
-    // Fixed axes to [0, 1] for consistent comparison across charts
-    const x = d3.scaleLinear().domain([0, 1]).range([0, innerW])
-    const y = d3.scaleLinear().domain([0, 1]).range([innerH, 0])
+    // Data-driven axes domains aligning to displayed values
+    let xMin = d3.min(points, (d) => d.x) ?? 0
+    let xMax = d3.max(points, (d) => d.x) ?? 1
+    if (xMin === xMax) {
+      const delta = xMin === 0 ? 1 : Math.abs(xMin) * 0.1
+      xMin -= delta
+      xMax += delta
+    }
+    let yMin = d3.min(points, (d) => d.y) ?? 0
+    let yMax = d3.max(points, (d) => d.y) ?? 1
+    if (yMin === yMax) {
+      const delta = yMin === 0 ? 1 : Math.abs(yMin) * 0.1
+      yMin -= delta
+      yMax += delta
+    }
+    const x = d3.scaleLinear().domain([xMin, xMax]).range([0, innerW]).nice()
+    const y = d3.scaleLinear().domain([yMin, yMax]).range([innerH, 0]).nice()
 
     const xAxis = d3.axisBottom(x).ticks(6)
     const yAxis = d3.axisLeft(y).ticks(6)
