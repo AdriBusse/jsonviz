@@ -49,3 +49,84 @@
 .fileCollapse .ant-collapse-header {
   background: transparent !important;
 }
+
+/* Tri-state maximize Segmented active coloring */
+.tri .ant-segmented-item-selected .ant-segmented-item-label {
+  color: #fff !important;
+  font-weight: 600;
+}
+.tri.tri-y .ant-segmented-thumb {
+  background: #2ca02c !important;
+}
+.tri.tri-x .ant-segmented-thumb {
+  background: #d67c00 !important;
+}
+.tri.tri-none .ant-segmented-thumb {
+  background: #8a8a8a !important;
+}
+.tri.tri-y .ant-segmented { box-shadow: inset 0 0 0 1px #2ca02c; }
+.tri.tri-x .ant-segmented { box-shadow: inset 0 0 0 1px #d67c00; }
+.tri.tri-none .ant-segmented { box-shadow: inset 0 0 0 1px #8a8a8a; }
+.tri.ant-segmented { --seg-radius: 8px; }
+.tri.tri-y.ant-segmented { box-shadow: inset 0 0 0 1px #2ca02c; }
+.tri.tri-x.ant-segmented { box-shadow: inset 0 0 0 1px #d67c00; }
+.tri.tri-none.ant-segmented { box-shadow: inset 0 0 0 1px #8a8a8a; }
+
+/* Extra emphasis for active label */
+.tri .ant-segmented-item-selected .ant-segmented-item-label {
+  text-shadow: 0 1px 0 rgba(0,0,0,0.25);
+}
+
+/* Pareto tab label and control visibility */
+.pareto-pane.light .form-label,
+.pareto-pane.light .form-inline-label { color: #222; font-weight: 600; }
+.pareto-pane.dark .form-label,
+.pareto-pane.dark .form-inline-label { color: #f0f0f0; font-weight: 600; }
+
+/* Segmented text contrast */
+.pareto-pane.dark .ant-segmented-item-label { color: #dddddd; }
+.pareto-pane.light .ant-segmented-item-label { color: #333333; }
+
+/* Select text and placeholder contrast */
+.pareto-pane.dark .ant-select .ant-select-selection-item,
+.pareto-pane.dark .ant-select .ant-select-selection-placeholder { color: #e6e6e6 !important; }
+.pareto-pane.dark .ant-select-single .ant-select-selector .ant-select-selection-item { color: #e6e6e6 !important; }
+.pareto-pane.light .ant-select .ant-select-selection-item,
+.pareto-pane.light .ant-select .ant-select-selection-placeholder { color: #333333 !important; }
+.pareto-pane.light .ant-select-single .ant-select-selector .ant-select-selection-item { color: #1f1f1f !important; }
+.pareto-pane.dark .ant-select-arrow { color: #e6e6e6; }
+.pareto-pane.light .ant-select-arrow { color: #333333; }
+
+/* Stronger visibility for Select controls in Pareto pane */
+.pareto-pane.dark .ant-select .ant-select-selector { background-color: #1f1f1f !important; border-color: #434343 !important; color: #e6e6e6 !important; }
+.pareto-pane.dark .ant-select:hover .ant-select-selector { border-color: #595959 !important; }
+.pareto-pane.dark .ant-select .ant-select-selection-search-input { color: #e6e6e6 !important; }
+.pareto-pane.dark .ant-select .ant-select-clear { color: #bfbfbf !important; }
+.pareto-pane.dark .ant-select .ant-select-selection-item-remove { color: #bfbfbf !important; }
+.pareto-pane.dark .ant-select-multiple .ant-select-selection-item { background-color: #262626 !important; border: 1px solid #434343 !important; }
+.pareto-pane.dark .ant-select-multiple .ant-select-selection-item .ant-select-selection-item-content { color: #e6e6e6 !important; }
+
+.pareto-pane.light .ant-select .ant-select-selector { background-color: #ffffff !important; border-color: #d9d9d9 !important; color: #1f1f1f !important; }
+.pareto-pane.light .ant-select:hover .ant-select-selector { border-color: #8c8c8c !important; }
+.pareto-pane.light .ant-select .ant-select-selection-search-input { color: #1f1f1f !important; }
+.pareto-pane.light .ant-select .ant-select-clear { color: #8c8c8c !important; }
+.pareto-pane.light .ant-select .ant-select-selection-item-remove { color: #8c8c8c !important; }
+.pareto-pane.light .ant-select-multiple .ant-select-selection-item { background-color: #fafafa !important; border: 1px solid #d9d9d9 !important; }
+.pareto-pane.light .ant-select-multiple .ant-select-selection-item .ant-select-selection-item-content { color: #1f1f1f !important; }
+
+/* Dropdown menu styling */
+.pareto-pane.dark .ant-select-dropdown { background: #1f1f1f !important; border: 1px solid #434343 !important; }
+.pareto-pane.dark .ant-select-dropdown .ant-select-item { color: #e6e6e6 !important; }
+.pareto-pane.dark .ant-select-dropdown .ant-select-item-option-active { background: #262626 !important; }
+.pareto-pane.dark .ant-select-dropdown .ant-select-item-option-selected { background: #303030 !important; }
+.pareto-pane.dark .ant-select-dropdown .ant-select-item-option-selected .ant-select-item-option-content { color: #ffffff !important; }
+
+.pareto-pane.light .ant-select-dropdown { background: #ffffff !important; border: 1px solid #d9d9d9 !important; }
+.pareto-pane.light .ant-select-dropdown .ant-select-item { color: #1f1f1f !important; }
+.pareto-pane.light .ant-select-dropdown .ant-select-item-option-active { background: #f5f5f5 !important; }
+.pareto-pane.light .ant-select-dropdown .ant-select-item-option-selected { background: #e6f4ff !important; }
+.pareto-pane.light .ant-select-dropdown .ant-select-item-option-selected .ant-select-item-option-content { color: #1f1f1f !important; }
+
+/* Divider text */
+.pareto-pane.dark .ant-divider .ant-divider-inner-text { color: #e6e6e6; }
+.pareto-pane.light .ant-divider .ant-divider-inner-text { color: #333333; }

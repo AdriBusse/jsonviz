@@ -107,13 +107,57 @@ export default function ParetoChart({
       const line = d3.line<number>()
         .x((d) => x(d))
         .y((d) => y(d))
-      g.append('path')
+      const diagColor = maximizeY ? '#2ca02c' : (maximizeX ? '#d67c00' : '#8a8a8a')
+      g
+        .append('path')
         .datum([min, max])
         .attr('fill', 'none')
-        .attr('stroke', isDark ? '#777' : '#888')
+        .attr('stroke', diagColor)
         .attr('stroke-dasharray', '4 4')
-        .attr('stroke-width', 1)
+        .attr('stroke-width', 1.5)
         .attr('d', line as any)
+        .style('pointer-events', 'none')
+
+      // Invisible wider hit area for reliable hover
+      const diagHit = g
+        .append('path')
+        .datum([min, max])
+        .attr('fill', 'none')
+        .attr('stroke', 'transparent')
+        .attr('stroke-width', 12)
+        .attr('d', line as any)
+        .style('pointer-events', 'stroke')
+      ;(diagHit as any).raise()
+
+      // Tooltip over diagonal: show which/how many points are above/below/on the line
+      const eps = 1e-9
+      const above = points.filter((p) => p.y > p.x + eps)
+      const below = points.filter((p) => p.y < p.x - eps)
+      const on = points.filter((p) => Math.abs(p.y - p.x) <= eps)
+      const favored = maximizeY ? 'above (variant > baseline)' : maximizeX ? 'below (baseline > variant)' : 'none'
+      const fmtList = (arr: typeof points) => {
+        const names = arr.map((p) => p.category)
+        const maxShow = 12
+        if (names.length <= maxShow) return names.join(', ')
+        return names.slice(0, maxShow).join(', ') + `, +${names.length - maxShow} more`
+      }
+      diagHit
+        .on('mouseover', function () {
+          const html = `
+            <div><strong>Diagonal y=x</strong></div>
+            <div>Favored side: <strong>${favored}</strong></div>
+            <div>Above: <strong>${above.length}</strong>${above.length ? '<br/>' + fmtList(above) : ''}</div>
+            <div>Below: <strong>${below.length}</strong>${below.length ? '<br/>' + fmtList(below) : ''}</div>
+            <div>On: <strong>${on.length}</strong>${on.length ? '<br/>' + fmtList(on) : ''}</div>
+          `
+          tooltip.html(html).style('display', 'block')
+        })
+        .on('mousemove', (event: MouseEvent) => {
+          tooltip.style('left', event.clientX + 12 + 'px').style('top', event.clientY + 12 + 'px')
+        })
+        .on('mouseout', function () {
+          tooltip.style('display', 'none')
+        })
     }
 
     const tooltip = d3
@@ -173,13 +217,16 @@ export default function ParetoChart({
       .text((d) => d.category)
 
     if (showFrontier) {
+      // If both toggles are false (tri-state 'none'), default to maximizing both for frontier
+      const mX = maximizeX || (!maximizeX && !maximizeY)
+      const mY = maximizeY || (!maximizeX && !maximizeY)
       const isDominated = (a: ParetoPoint) =>
         points.some((b) => {
           if (a === b) return false
-          const betterX = maximizeX ? b.x >= a.x : b.x <= a.x
-          const betterY = maximizeY ? b.y >= a.y : b.y <= a.y
-          const strictlyBetter = maximizeX ? b.x > a.x : b.x < a.x
-          const strictlyBetterY = maximizeY ? b.y > a.y : b.y < a.y
+          const betterX = mX ? b.x >= a.x : b.x <= a.x
+          const betterY = mY ? b.y >= a.y : b.y <= a.y
+          const strictlyBetter = mX ? b.x > a.x : b.x < a.x
+          const strictlyBetterY = mY ? b.y > a.y : b.y < a.y
           return betterX && betterY && (strictlyBetter || strictlyBetterY)
         })
       const frontier = points.filter((p) => !isDominated(p))
@@ -195,6 +242,7 @@ export default function ParetoChart({
         .attr('stroke', isDark ? '#6fa8ff' : '#165dff')
         .attr('stroke-width', 2)
         .attr('d', line as any)
+        .style('pointer-events', 'none')
     }
 
     return () => {

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Select, Spin, Table, Typography, Divider, FloatButton, Modal, Input, Space, Tag, Button, Checkbox, Popconfirm, message, Tooltip, Tabs, Collapse, Dropdown, Switch } from 'antd'
+import { Alert, Select, Spin, Table, Typography, Divider, FloatButton, Modal, Input, Space, Tag, Button, Checkbox, Popconfirm, message, Tooltip, Tabs, Collapse, Dropdown, Switch, Segmented } from 'antd'
 import { UpOutlined, InfoCircleOutlined, RightOutlined, DownloadOutlined } from '@ant-design/icons'
 import './App.css'
 import './table-theme.css'
@@ -8,7 +8,7 @@ import ChartInfo from './components/ChartInfo'
 import LineChart from './components/LineChart'
 import ParetoChart from './components/ParetoChart'
 import { buildMetricMap, getMetricDescription, parseMetricName } from './utils/metrics'
-import type { Manifest, LoadedFile, SavedFilter, SavedSuite, DiagramSpec, Series } from './types'
+import type { Manifest, LoadedFile, SavedFilter, SavedSuite, DiagramSpec, Series, SavedPareto } from './types'
 
 function App() {
   const [manifest, setManifest] = useState<Manifest | null>(null)
@@ -22,7 +22,7 @@ function App() {
   const [dataKeySections, setDataKeySections] = useState<(string | null)[]>([null])
   const selectionRef = useRef<HTMLDivElement | null>(null)
   const diagramSvgRefs = useRef<Record<number, SVGSVGElement | null>>({})
-  const paretoSvgRef = useRef<SVGSVGElement | null>(null)
+  const paretoSvgRefs = useRef<Record<number, SVGSVGElement | null>>({})
   // Diagram preview modal state
   const [previewDiagram, setPreviewDiagram] = useState<{ key: string; metricBase: string } | null>(null)
   // Saved reusable filters (initialize from localStorage to avoid first-render overwrite)
@@ -41,14 +41,16 @@ function App() {
     return []
   })
 
-  // Export Pareto chart (SVG)
-  function downloadParetoSvg() {
-    const src = paretoSvgRef.current
+  // Export Pareto chart (SVG) for a section
+  function downloadParetoSvgAt(idx: number, sec: SavedPareto) {
+    const src = paretoSvgRefs.current[idx]
     if (!src) { message.error('Pareto chart not ready to export'); return }
     const NS = 'http://www.w3.org/2000/svg'
-    const bName = paretoBaseline ? (filesCache[paretoBaseline]?.name || paretoBaseline) : 'baseline'
-    const vName = paretoVariant ? (filesCache[paretoVariant]?.name || paretoVariant) : 'variant'
-    const titleText = `Pareto: ${paretoMetricBase ?? ''}${paretoK != null ? `@${paretoK}` : ''} — X: ${bName} vs Y: ${vName}`
+    const bName = sec.baseline ? (filesCache[sec.baseline]?.name || sec.baseline) : 'baseline'
+    const vName = sec.variant ? (filesCache[sec.variant]?.name || sec.variant) : 'variant'
+    const bases = (sec.metricBases && sec.metricBases.length) ? sec.metricBases.join(',') : (sec.metricBase ?? '')
+    const ksTxt = (sec.ks && sec.ks.length) ? '@' + sec.ks.join(',') : (sec.k != null ? `@${sec.k}` : '')
+    const titleText = `Pareto: ${bases}${ksTxt} — X: ${bName} vs Y: ${vName}`
     const margin = 16
     const titleFontSize = 14
     const titleHeight = titleFontSize + 8
@@ -88,7 +90,7 @@ function App() {
     const blob = new Blob([xml], { type: 'image/svg+xml;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const compName = (activeSuiteId && savedSuites.find((x) => x.id === activeSuiteId)?.name) || 'comparison'
-    const file = sanitizeFilename(`${compName}_pareto_${paretoMetricBase ?? 'metric'}${paretoK != null ? `@${paretoK}` : ''}.svg`)
+    const file = sanitizeFilename(`${compName}_pareto_${bases || 'metric'}${ksTxt || ''}.svg`)
     const a = document.createElement('a')
     a.href = url
     a.download = file
@@ -98,14 +100,16 @@ function App() {
     URL.revokeObjectURL(url)
   }
 
-  // Export Pareto chart (PNG)
-  function downloadParetoPng(useDarkBg: boolean) {
-    const src = paretoSvgRef.current
+  // Export Pareto chart (PNG) for a section
+  function downloadParetoPngAt(idx: number, sec: SavedPareto, useDarkBg: boolean) {
+    const src = paretoSvgRefs.current[idx]
     if (!src) { message.error('Pareto chart not ready to export'); return }
     const NS = 'http://www.w3.org/2000/svg'
-    const bName = paretoBaseline ? (filesCache[paretoBaseline]?.name || paretoBaseline) : 'baseline'
-    const vName = paretoVariant ? (filesCache[paretoVariant]?.name || paretoVariant) : 'variant'
-    const titleText = `Pareto: ${paretoMetricBase ?? ''}${paretoK != null ? `@${paretoK}` : ''} — X: ${bName} vs Y: ${vName}`
+    const bName = sec.baseline ? (filesCache[sec.baseline]?.name || sec.baseline) : 'baseline'
+    const vName = sec.variant ? (filesCache[sec.variant]?.name || sec.variant) : 'variant'
+    const bases = (sec.metricBases && sec.metricBases.length) ? sec.metricBases.join(',') : (sec.metricBase ?? '')
+    const ksTxt = (sec.ks && sec.ks.length) ? '@' + sec.ks.join(',') : (sec.k != null ? `@${sec.k}` : '')
+    const titleText = `Pareto: ${bases}${ksTxt} — X: ${bName} vs Y: ${vName}`
     const margin = 16
     const titleFontSize = 14
     const titleHeight = titleFontSize + 8
@@ -164,7 +168,7 @@ function App() {
         if (!blob) { URL.revokeObjectURL(svgUrl); message.error('Failed to export PNG'); return }
         const url = URL.createObjectURL(blob)
         const compName = (activeSuiteId && savedSuites.find((x) => x.id === activeSuiteId)?.name) || 'comparison'
-        const file = sanitizeFilename(`${compName}_pareto_${paretoMetricBase ?? 'metric'}${paretoK != null ? `@${paretoK}` : ''}.png`)
+        const file = sanitizeFilename(`${compName}_pareto_${bases || 'metric'}${ksTxt || ''}.png`)
         const a = document.createElement('a')
         a.href = url
         a.download = file
@@ -404,10 +408,13 @@ function App() {
         categories: paretoCategories,
         metricBase: paretoMetricBase,
         k: paretoK,
+        metricBases: paretoMetricBasesSel,
+        ks: paretoKsSel,
         showFrontier: paretoShowFrontier,
         showDiagonal: paretoShowDiagonal,
-        maximizeX: paretoMaximizeX,
-        maximizeY: paretoMaximizeY,
+        maximize: paretoMaximizeMode,
+        maximizeX: paretoMaximizeMode === 'x',
+        maximizeY: paretoMaximizeMode === 'y',
       },
     }
   }
@@ -431,10 +438,17 @@ function App() {
       setParetoCategories(Array.isArray(suite.pareto.categories) ? suite.pareto.categories : [])
       setParetoMetricBase(suite.pareto.metricBase ?? null)
       setParetoK(suite.pareto.k ?? null)
+      setParetoMetricBasesSel(Array.isArray(suite.pareto.metricBases) ? suite.pareto.metricBases : [])
+      setParetoKsSel(Array.isArray(suite.pareto.ks) ? suite.pareto.ks : [])
       setParetoShowFrontier(!!suite.pareto.showFrontier)
       setParetoShowDiagonal(!!suite.pareto.showDiagonal)
-      setParetoMaximizeX(!!suite.pareto.maximizeX)
-      setParetoMaximizeY(!!suite.pareto.maximizeY)
+      if (suite.pareto.maximize === 'x' || suite.pareto.maximize === 'y' || suite.pareto.maximize === 'none') {
+        setParetoMaximizeMode(suite.pareto.maximize)
+      } else {
+        const mx = !!suite.pareto.maximizeX
+        const my = !!suite.pareto.maximizeY
+        setParetoMaximizeMode(mx && !my ? 'x' : my && !mx ? 'y' : 'none')
+      }
     }
     message.success(`Loaded "${suite.name}"`)
   }
@@ -664,12 +678,15 @@ function App() {
   const [paretoBaseline, setParetoBaseline] = useState<string | null>(null)
   const [paretoVariant, setParetoVariant] = useState<string | null>(null)
   const [paretoCategories, setParetoCategories] = useState<string[]>([])
+  // Back-compat single selections (kept for loading old suites); not used for chart if multi selects are set
   const [paretoMetricBase, setParetoMetricBase] = useState<string | null>(null)
   const [paretoK, setParetoK] = useState<number | null>(null)
+  // New multi-selects
+  const [paretoMetricBasesSel, setParetoMetricBasesSel] = useState<string[]>([])
+  const [paretoKsSel, setParetoKsSel] = useState<number[]>([])
   const [paretoShowFrontier, setParetoShowFrontier] = useState(true)
   const [paretoShowDiagonal, setParetoShowDiagonal] = useState(true)
-  const [paretoMaximizeX, setParetoMaximizeX] = useState(true)
-  const [paretoMaximizeY, setParetoMaximizeY] = useState(true)
+  const [paretoMaximizeMode, setParetoMaximizeMode] = useState<'y' | 'none' | 'x'>('none')
 
   // Initialize defaults when selection changes
   useEffect(() => {
@@ -734,35 +751,86 @@ function App() {
     if (!paretoK && paretoKs.length) setParetoK(paretoKs[0])
   }, [paretoKs])
 
+  // Initialize multi-selects from single selections for convenience
+  useEffect(() => {
+    if (paretoMetricBasesSel.length === 0 && paretoMetricBase) setParetoMetricBasesSel([paretoMetricBase])
+  }, [paretoMetricBase])
+  useEffect(() => {
+    if (paretoKsSel.length === 0 && paretoK != null) setParetoKsSel([paretoK])
+  }, [paretoK])
+
+  // Compute available ks across selected metric bases (union of intersections across files+categories per base)
+  const paretoKsMulti = useMemo(() => {
+    if (!paretoBaseline || !paretoVariant) return [] as number[]
+    if (paretoMetricBasesSel.length === 0) return [] as number[]
+    const b = filesCache[paretoBaseline]
+    const v = filesCache[paretoVariant]
+    if (!b || !v) return [] as number[]
+    const union = new Set<number>()
+    for (const base of paretoMetricBasesSel) {
+      const counter: Record<number, number> = {}
+      for (const cat of paretoCategories) {
+        const mapB = buildMetricMap(cat, b.data?.[cat])
+        const mapV = buildMetricMap(cat, v.data?.[cat])
+        const ksB = new Set(Object.keys(mapB).map((m) => parseMetricName(m)).filter((x) => x.base === base && x.k != null).map((x) => x.k as number))
+        const ksV = new Set(Object.keys(mapV).map((m) => parseMetricName(m)).filter((x) => x.base === base && x.k != null).map((x) => x.k as number))
+        for (const k of ksB) { if (ksV.has(k)) counter[k] = (counter[k] || 0) + 1 }
+      }
+      for (const [k, c] of Object.entries(counter)) { if (c === paretoCategories.length) union.add(Number(k)) }
+    }
+    return Array.from(union).sort((a, b) => a - b)
+  }, [paretoBaseline, paretoVariant, paretoCategories, paretoMetricBasesSel, filesCache])
+
   const paretoPoints = useMemo(() => {
-    if (!paretoBaseline || !paretoVariant || !paretoMetricBase || paretoK == null) return []
+    if (!paretoBaseline || !paretoVariant) return []
     const b = filesCache[paretoBaseline]
     const v = filesCache[paretoVariant]
     if (!b || !v) return []
-    const pts: { category: string; x: number; y: number }[] = []
+    const bases = paretoMetricBasesSel.length > 0 ? paretoMetricBasesSel : (paretoMetricBase ? [paretoMetricBase] : [])
+    const ksUse = paretoKsSel.length > 0 ? paretoKsSel : (paretoK != null ? [paretoK] : [])
+    if (bases.length === 0 || ksUse.length === 0) return []
+
+    // Assign a stable color per base (group color)
+    const baseToColor = new Map<string, string>()
+    bases.forEach((base, i) => {
+      const hue = Math.round((i * 360) / bases.length)
+      const col = `hsl(${hue}, 70%, ${isDark ? 60 : 45}%)`
+      baseToColor.set(base, col)
+    })
+
+    type P = { category: string; x: number; y: number; color?: string }
+    const pts: P[] = []
     for (const cat of paretoCategories) {
       const mapB = buildMetricMap(cat, b.data?.[cat])
       const mapV = buildMetricMap(cat, v.data?.[cat])
-      let xb: number | null = null
-      let yv: number | null = null
-      for (const [mk, mv] of Object.entries(mapB)) {
-        const parsed = parseMetricName(mk)
-        if (parsed.base === paretoMetricBase && parsed.k === paretoK) {
-          const num = typeof mv === 'number' ? mv : Number(mv)
-          if (Number.isFinite(num)) xb = num
+      for (const base of bases) {
+        for (const k of ksUse) {
+          let xb: number | null = null
+          let yv: number | null = null
+          for (const [mk, mv] of Object.entries(mapB)) {
+            const parsed = parseMetricName(mk)
+            if (parsed.base === base && parsed.k === k) {
+              const num = typeof mv === 'number' ? mv : Number(mv)
+              if (Number.isFinite(num)) xb = num
+            }
+          }
+          for (const [mk, mv] of Object.entries(mapV)) {
+            const parsed = parseMetricName(mk)
+            if (parsed.base === base && parsed.k === k) {
+              const num = typeof mv === 'number' ? mv : Number(mv)
+              if (Number.isFinite(num)) yv = num
+            }
+          }
+          if (xb != null && yv != null) {
+            const color = baseToColor.get(base)
+            const label = `${cat} • ${base}@${k}`
+            pts.push({ category: label, x: xb, y: yv, color })
+          }
         }
       }
-      for (const [mk, mv] of Object.entries(mapV)) {
-        const parsed = parseMetricName(mk)
-        if (parsed.base === paretoMetricBase && parsed.k === paretoK) {
-          const num = typeof mv === 'number' ? mv : Number(mv)
-          if (Number.isFinite(num)) yv = num
-        }
-      }
-      if (xb != null && yv != null) pts.push({ category: cat, x: xb, y: yv })
     }
     return pts
-  }, [paretoBaseline, paretoVariant, paretoMetricBase, paretoK, paretoCategories, filesCache])
+  }, [paretoBaseline, paretoVariant, paretoMetricBasesSel, paretoKsSel, paretoMetricBase, paretoK, paretoCategories, filesCache, isDark])
 
   // Metric parsing helpers for charting
   // parseMetricName imported from utils
@@ -1663,32 +1731,34 @@ function App() {
               key: 'pareto',
               label: <span style={{ color: isDark ? '#fff' : '#000' }}>Pareto</span>,
               children: (
-                <>
+                <div className={`pareto-pane ${isDark ? 'dark' : 'light'}`}>
                   <Divider orientation="left">Pareto Frontier Comparison</Divider>
                   <Space direction="vertical" style={{ width: '100%' }} size={12}>
                     <Space wrap>
                       <div>
-                        <div style={{ marginBottom: 4 }}>Baseline method</div>
+                        <div className="form-label" style={{ marginBottom: 4 }}>Baseline method</div>
                         <Select
                           style={{ width: 280 }}
                           placeholder="Select baseline"
                           value={paretoBaseline ?? undefined}
                           onChange={(v) => setParetoBaseline(v)}
                           options={selectedValidFiles.map((f) => ({ label: f.name || f.path, value: f.path }))}
+                          getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
                         />
                       </div>
                       <div>
-                        <div style={{ marginBottom: 4 }}>Variant method</div>
+                        <div className="form-label" style={{ marginBottom: 4 }}>Variant method</div>
                         <Select
                           style={{ width: 280 }}
                           placeholder="Select variant"
                           value={paretoVariant ?? undefined}
                           onChange={(v) => setParetoVariant(v)}
                           options={selectedValidFiles.map((f) => ({ label: f.name || f.path, value: f.path }))}
+                          getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
                         />
                       </div>
                       <div>
-                        <div style={{ marginBottom: 4 }}>Categories</div>
+                        <div className="form-label" style={{ marginBottom: 4 }}>Categories</div>
                         <Select
                           mode="multiple"
                           style={{ minWidth: 360 }}
@@ -1696,38 +1766,66 @@ function App() {
                           value={paretoCategories}
                           onChange={(vals) => setParetoCategories(vals)}
                           options={commonDataKeys.map((k) => ({ label: k, value: k }))}
+                          getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
                         />
                       </div>
                     </Space>
                     <Space wrap>
                       <div>
-                        <div style={{ marginBottom: 4 }}>Metric</div>
+                        <div className="form-label" style={{ marginBottom: 4 }}>Metrics & k</div>
                         <Select
-                          style={{ width: 200 }}
-                          placeholder="Metric base"
-                          value={paretoMetricBase ?? undefined}
-                          onChange={(v) => { setParetoMetricBase(v); setParetoK(null) }}
+                          mode="multiple"
+                          style={{ minWidth: 280 }}
+                          placeholder="Metric base(s)"
+                          value={paretoMetricBasesSel}
+                          onChange={(vals) => {
+                            setParetoMetricBasesSel(vals)
+                            // Clear single selection to avoid confusion
+                            if (vals.length) setParetoMetricBase(null)
+                          }}
                           options={paretoMetricBases.map((b) => ({ label: b, value: b }))}
+                          allowClear
+                          getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
                         />
                         <Select
-                          style={{ width: 160, marginLeft: 8 }}
-                          placeholder="k"
-                          value={paretoK ?? undefined}
-                          onChange={(v) => setParetoK(v)}
-                          options={paretoKs.map((k) => ({ label: String(k), value: k }))}
+                          mode="multiple"
+                          style={{ minWidth: 200, marginLeft: 8 }}
+                          placeholder="k value(s)"
+                          value={paretoKsSel}
+                          onChange={(vals) => {
+                            setParetoKsSel(vals)
+                            if (vals.length) setParetoK(null)
+                          }}
+                          options={(paretoMetricBasesSel.length > 0 ? paretoKsMulti : paretoKs).map((k) => ({ label: String(k), value: k }))}
+                          allowClear
+                          getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
                         />
                       </div>
                       <div>
-                        <div style={{ marginBottom: 4 }}>Display</div>
+                        <div className="form-label" style={{ marginBottom: 4 }}>Display</div>
                         <Space>
-                          <span>Frontier</span>
+                          <span className="form-inline-label">Frontier</span>
                           <Switch checked={paretoShowFrontier} onChange={setParetoShowFrontier} />
-                          <span>Diagonal</span>
+                          <span className="form-inline-label">Diagonal</span>
                           <Switch checked={paretoShowDiagonal} onChange={setParetoShowDiagonal} />
-                          <span>Maximize X</span>
-                          <Switch checked={paretoMaximizeX} onChange={setParetoMaximizeX} />
-                          <span>Maximize Y</span>
-                          <Switch checked={paretoMaximizeY} onChange={setParetoMaximizeY} />
+                          <span className="form-inline-label">Maximize</span>
+                          <Segmented
+                            size="small"
+                            options={[
+                              { label: (<span><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 999, background: '#2ca02c', marginRight: 6 }} />Y</span>), value: 'y' },
+                              { label: (<span><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 999, background: '#8a8a8a', marginRight: 6 }} />None</span>), value: 'none' },
+                              { label: (<span><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 999, background: '#d67c00', marginRight: 6 }} />X</span>), value: 'x' },
+                            ]}
+                            value={paretoMaximizeMode}
+                            onChange={(v) => setParetoMaximizeMode(v as 'y' | 'none' | 'x')}
+                            className={`tri tri-${paretoMaximizeMode}`}
+                          />
+                          <Tag
+                            color={paretoMaximizeMode === 'y' ? '#2ca02c' : (paretoMaximizeMode === 'x' ? '#d67c00' : '#8a8a8a')}
+                            style={{ marginLeft: 8, color: '#fff', border: 'none' }}
+                          >
+                            {paretoMaximizeMode === 'y' ? 'Active: Y' : paretoMaximizeMode === 'x' ? 'Active: X' : 'Active: None'}
+                          </Tag>
                         </Space>
                       </div>
                       <div style={{ marginLeft: 'auto' }}>
@@ -1739,9 +1837,21 @@ function App() {
                               { key: 'svg', label: 'SVG' },
                             ],
                             onClick: ({ key }) => {
-                              if (key === 'png-light') downloadParetoPng(false)
-                              else if (key === 'png-dark') downloadParetoPng(true)
-                              else if (key === 'svg') downloadParetoSvg()
+                              const sec = {
+                                baseline: paretoBaseline,
+                                variant: paretoVariant,
+                                categories: paretoCategories,
+                                metricBases: paretoMetricBasesSel.length ? paretoMetricBasesSel : (paretoMetricBase ? [paretoMetricBase] : []),
+                                ks: paretoKsSel.length ? paretoKsSel : (paretoK != null ? [paretoK] : []),
+                                showFrontier: paretoShowFrontier,
+                                showDiagonal: paretoShowDiagonal,
+                                maximize: paretoMaximizeMode,
+                                maximizeX: paretoMaximizeMode === 'x',
+                                maximizeY: paretoMaximizeMode === 'y',
+                              } as SavedPareto
+                              if (key === 'png-light') downloadParetoPngAt(0, sec, false)
+                              else if (key === 'png-dark') downloadParetoPngAt(0, sec, true)
+                              else if (key === 'svg') downloadParetoSvgAt(0, sec)
                             },
                           }}
                         >
@@ -1749,28 +1859,42 @@ function App() {
                         </Dropdown>
                       </div>
                     </Space>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'start', gap: 12 }}>
-                      <div style={{ color: isDark ? '#aaa' : '#666', maxWidth: 320, fontSize: 12 }}>
-                        Compare categories by plotting baseline (X) vs variant (Y) for the selected metric and k. Points above the diagonal favor the variant.
-                      </div>
-                      <div>
-                        <ParetoChart
-                          points={paretoPoints}
-                          width={900}
-                          height={520}
-                          isDark={isDark}
-                          xLabel={paretoMetricBase && paretoK != null ? `${paretoMetricBase}@${paretoK} (baseline)` : 'baseline'}
-                          yLabel={paretoMetricBase && paretoK != null ? `${paretoMetricBase}@${paretoK} (variant)` : 'variant'}
-                          showFrontier={paretoShowFrontier}
-                          showDiagonal={paretoShowDiagonal}
-                          maximizeX={paretoMaximizeX}
-                          maximizeY={paretoMaximizeY}
-                          exportRef={(el: SVGSVGElement | null) => { paretoSvgRef.current = el }}
-                        />
+                    <div className={`pareto-content ${isDark ? 'dark' : 'light'}`}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <div style={{ color: isDark ? '#aaa' : '#666', maxWidth: 900, fontSize: 12, alignSelf: 'center', textAlign: 'center' }}>
+                          Compare categories by plotting baseline (X) vs variant (Y) for the selected metric and k. Points above the diagonal favor the variant.
+                        </div>
+                        <div style={{ alignSelf: 'center' }}>
+                          <ParetoChart
+                            points={paretoPoints}
+                            width={900}
+                            height={520}
+                            isDark={isDark}
+                            xLabel={
+                              (paretoMetricBasesSel.length === 1 && paretoKsSel.length === 1)
+                                ? `${paretoMetricBasesSel[0]}@${paretoKsSel[0]} (baseline)`
+                                : (paretoMetricBasesSel.length === 0 && paretoKsSel.length === 0 && paretoMetricBase && paretoK != null)
+                                  ? `${paretoMetricBase}@${paretoK} (baseline)`
+                                  : 'baseline'
+                            }
+                            yLabel={
+                              (paretoMetricBasesSel.length === 1 && paretoKsSel.length === 1)
+                                ? `${paretoMetricBasesSel[0]}@${paretoKsSel[0]} (variant)`
+                                : (paretoMetricBasesSel.length === 0 && paretoKsSel.length === 0 && paretoMetricBase && paretoK != null)
+                                  ? `${paretoMetricBase}@${paretoK} (variant)`
+                                  : 'variant'
+                            }
+                            showFrontier={paretoShowFrontier}
+                            showDiagonal={paretoShowDiagonal}
+                            maximizeX={paretoMaximizeMode === 'x'}
+                            maximizeY={paretoMaximizeMode === 'y'}
+                            exportRef={(el: SVGSVGElement | null) => { paretoSvgRefs.current[0] = el }}
+                          />
+                        </div>
                       </div>
                     </div>
                   </Space>
-                </>
+                </div>
               ),
             },
           ]}

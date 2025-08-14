@@ -22,8 +22,14 @@ export type SavedPareto = {
   baseline: string | null
   variant: string | null
   categories: string[]
-  metricBase: string | null
-  k: number | null
+  // Backward-compatible single selections
+  metricBase?: string | null
+  k?: number | null
+  // New multi-select support
+  metricBases?: string[]
+  ks?: number[]
+  // New tri-state maximize control: 'y' | 'none' | 'x'
+  maximize?: 'y' | 'none' | 'x'
   showFrontier: boolean
   showDiagonal: boolean
   maximizeX: boolean
@@ -39,7 +45,10 @@ export type SavedSuite = {
   sectionFilters: Record<number, string | null>
   sectionRows: Record<number, string[]>
   diagramSections?: { key: string; metricBase: string }[]
+  // Backward-compatible single Pareto configuration
   pareto?: SavedPareto
+  // New: multiple Pareto charts per suite
+  paretoSections?: SavedPareto[]
 }
 
 export type DiagramSpec = { key: string | null; metricBase: string | null }
