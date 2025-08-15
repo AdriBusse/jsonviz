@@ -50,7 +50,12 @@ function App() {
     const vName = sec.variant ? (filesCache[sec.variant]?.name || sec.variant) : 'variant'
     const bases = (sec.metricBases && sec.metricBases.length) ? sec.metricBases.join(',') : (sec.metricBase ?? '')
     const ksTxt = (sec.ks && sec.ks.length) ? '@' + sec.ks.join(',') : (sec.k != null ? `@${sec.k}` : '')
-    const titleText = `Pareto: ${bases}${ksTxt} — X: ${bName} vs Y: ${vName}`
+    const baseK = (sec.metricKByBase && Object.keys(sec.metricKByBase).length)
+      ? Object.entries(sec.metricKByBase)
+          .flatMap(([b, ks]) => (Array.isArray(ks) ? ks.map((k) => `${b}@${k}`) : []))
+          .join(', ')
+      : `${bases}${ksTxt}`
+    const titleText = `Pareto: ${baseK} — X: ${bName} vs Y: ${vName}`
     const margin = 16
     const titleFontSize = 14
     const titleHeight = titleFontSize + 8
@@ -90,7 +95,7 @@ function App() {
     const blob = new Blob([xml], { type: 'image/svg+xml;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const compName = (activeSuiteId && savedSuites.find((x) => x.id === activeSuiteId)?.name) || 'comparison'
-    const file = sanitizeFilename(`${compName}_pareto_${bases || 'metric'}${ksTxt || ''}.svg`)
+    const file = sanitizeFilename(`${compName}_pareto_${(baseK || 'metric').replace(/[^a-z0-9_@,-]+/gi, '-')}.svg`)
     const a = document.createElement('a')
     a.href = url
     a.download = file
@@ -109,7 +114,12 @@ function App() {
     const vName = sec.variant ? (filesCache[sec.variant]?.name || sec.variant) : 'variant'
     const bases = (sec.metricBases && sec.metricBases.length) ? sec.metricBases.join(',') : (sec.metricBase ?? '')
     const ksTxt = (sec.ks && sec.ks.length) ? '@' + sec.ks.join(',') : (sec.k != null ? `@${sec.k}` : '')
-    const titleText = `Pareto: ${bases}${ksTxt} — X: ${bName} vs Y: ${vName}`
+    const baseK = (sec.metricKByBase && Object.keys(sec.metricKByBase).length)
+      ? Object.entries(sec.metricKByBase)
+          .flatMap(([b, ks]) => (Array.isArray(ks) ? ks.map((k) => `${b}@${k}`) : []))
+          .join(', ')
+      : `${bases}${ksTxt}`
+    const titleText = `Pareto: ${baseK} — X: ${bName} vs Y: ${vName}`
     const margin = 16
     const titleFontSize = 14
     const titleHeight = titleFontSize + 8
@@ -168,7 +178,7 @@ function App() {
         if (!blob) { URL.revokeObjectURL(svgUrl); message.error('Failed to export PNG'); return }
         const url = URL.createObjectURL(blob)
         const compName = (activeSuiteId && savedSuites.find((x) => x.id === activeSuiteId)?.name) || 'comparison'
-        const file = sanitizeFilename(`${compName}_pareto_${bases || 'metric'}${ksTxt || ''}.png`)
+        const file = sanitizeFilename(`${compName}_pareto_${(baseK || 'metric').replace(/[^a-z0-9_@,-]+/gi, '-')}.png`)
         const a = document.createElement('a')
         a.href = url
         a.download = file
@@ -410,6 +420,7 @@ function App() {
         k: paretoK,
         metricBases: paretoMetricBasesSel,
         ks: paretoKsSel,
+        metricKByBase: paretoMetricKByBase,
         showFrontier: paretoShowFrontier,
         showDiagonal: paretoShowDiagonal,
         maximize: paretoMaximizeMode,
@@ -440,6 +451,19 @@ function App() {
       setParetoK(suite.pareto.k ?? null)
       setParetoMetricBasesSel(Array.isArray(suite.pareto.metricBases) ? suite.pareto.metricBases : [])
       setParetoKsSel(Array.isArray(suite.pareto.ks) ? suite.pareto.ks : [])
+      // Normalize old/new metricKByBase formats to arrays
+      const rawMap = (suite.pareto.metricKByBase ?? {}) as Record<string, unknown>
+      const normalized: Record<string, number[]> = {}
+      for (const [base, val] of Object.entries(rawMap)) {
+        if (Array.isArray(val)) {
+          normalized[base] = (val as unknown[]).filter((x) => typeof x === 'number') as number[]
+        } else if (typeof val === 'number') {
+          normalized[base] = [val]
+        } else if (val == null) {
+          normalized[base] = []
+        }
+      }
+      setParetoMetricKByBase(normalized)
       setParetoShowFrontier(!!suite.pareto.showFrontier)
       setParetoShowDiagonal(!!suite.pareto.showDiagonal)
       if (suite.pareto.maximize === 'x' || suite.pareto.maximize === 'y' || suite.pareto.maximize === 'none') {
@@ -684,6 +708,8 @@ function App() {
   // New multi-selects
   const [paretoMetricBasesSel, setParetoMetricBasesSel] = useState<string[]>([])
   const [paretoKsSel, setParetoKsSel] = useState<number[]>([])
+  // New: per-metric selected k mapping for Pareto
+  const [paretoMetricKByBase, setParetoMetricKByBase] = useState<Record<string, number[]>>({})
   const [paretoShowFrontier, setParetoShowFrontier] = useState(true)
   const [paretoShowDiagonal, setParetoShowDiagonal] = useState(true)
   const [paretoMaximizeMode, setParetoMaximizeMode] = useState<'y' | 'none' | 'x'>('none')
@@ -759,14 +785,13 @@ function App() {
     if (paretoKsSel.length === 0 && paretoK != null) setParetoKsSel([paretoK])
   }, [paretoK])
 
-  // Compute available ks across selected metric bases (union of intersections across files+categories per base)
-  const paretoKsMulti = useMemo(() => {
-    if (!paretoBaseline || !paretoVariant) return [] as number[]
-    if (paretoMetricBasesSel.length === 0) return [] as number[]
+  // Available k values per selected metric base (intersection across files+categories per base)
+  const paretoKsByBase = useMemo(() => {
+    const out: Record<string, number[]> = {}
+    if (!paretoBaseline || !paretoVariant) return out
     const b = filesCache[paretoBaseline]
     const v = filesCache[paretoVariant]
-    if (!b || !v) return [] as number[]
-    const union = new Set<number>()
+    if (!b || !v) return out
     for (const base of paretoMetricBasesSel) {
       const counter: Record<number, number> = {}
       for (const cat of paretoCategories) {
@@ -776,10 +801,27 @@ function App() {
         const ksV = new Set(Object.keys(mapV).map((m) => parseMetricName(m)).filter((x) => x.base === base && x.k != null).map((x) => x.k as number))
         for (const k of ksB) { if (ksV.has(k)) counter[k] = (counter[k] || 0) + 1 }
       }
-      for (const [k, c] of Object.entries(counter)) { if (c === paretoCategories.length) union.add(Number(k)) }
+      out[base] = Object.entries(counter)
+        .filter(([, c]) => c === paretoCategories.length)
+        .map(([k]) => Number(k))
+        .sort((a, b) => a - b)
     }
-    return Array.from(union).sort((a, b) => a - b)
+    return out
   }, [paretoBaseline, paretoVariant, paretoCategories, paretoMetricBasesSel, filesCache])
+
+  // Keep per-base k selection in sync with available bases/options
+  useEffect(() => {
+    setParetoMetricKByBase((prev) => {
+      const next: Record<string, number[]> = {}
+      for (const base of paretoMetricBasesSel) {
+        const opts = paretoKsByBase[base] || []
+        const prevArr = Array.isArray(prev[base]) ? prev[base] : []
+        const kept = prevArr.filter((k) => opts.includes(k))
+        next[base] = kept.length > 0 ? kept : (opts.length > 0 ? [opts[0]] : [])
+      }
+      return next
+    })
+  }, [paretoMetricBasesSel, paretoKsByBase])
 
   const paretoPoints = useMemo(() => {
     if (!paretoBaseline || !paretoVariant) return []
@@ -787,50 +829,94 @@ function App() {
     const v = filesCache[paretoVariant]
     if (!b || !v) return []
     const bases = paretoMetricBasesSel.length > 0 ? paretoMetricBasesSel : (paretoMetricBase ? [paretoMetricBase] : [])
-    const ksUse = paretoKsSel.length > 0 ? paretoKsSel : (paretoK != null ? [paretoK] : [])
-    if (bases.length === 0 || ksUse.length === 0) return []
+    // In per-base mode require each base to have a selected k; otherwise fall back to single base+k selection
+    const usingPerBase = paretoMetricBasesSel.length > 0
+    if (!usingPerBase) {
+      const ksUse = paretoKsSel.length > 0 ? paretoKsSel : (paretoK != null ? [paretoK] : [])
+      if (bases.length === 0 || ksUse.length === 0) return []
+      // Legacy path: combine base(s) with ksUse (should be single each in practice)
+      const baseToColor = new Map<string, string>()
+      bases.forEach((base, i) => {
+        const hue = Math.round((i * 360) / bases.length)
+        const col = `hsl(${hue}, 70%, ${isDark ? 60 : 45}%)`
+        baseToColor.set(base, col)
+      })
+      type P = { category: string; x: number; y: number; color?: string }
+      const pts: P[] = []
+      for (const cat of paretoCategories) {
+        const mapB = buildMetricMap(cat, b.data?.[cat])
+        const mapV = buildMetricMap(cat, v.data?.[cat])
+        for (const base of bases) {
+          for (const k of ksUse) {
+            let xb: number | null = null
+            let yv: number | null = null
+            for (const [mk, mv] of Object.entries(mapB)) {
+              const parsed = parseMetricName(mk)
+              if (parsed.base === base && parsed.k === k) {
+                const num = typeof mv === 'number' ? mv : Number(mv)
+                if (Number.isFinite(num)) xb = num
+              }
+            }
+            for (const [mk, mv] of Object.entries(mapV)) {
+              const parsed = parseMetricName(mk)
+              if (parsed.base === base && parsed.k === k) {
+                const num = typeof mv === 'number' ? mv : Number(mv)
+                if (Number.isFinite(num)) yv = num
+              }
+            }
+            if (xb != null && yv != null) {
+              const color = baseToColor.get(base)
+              const label = `${cat} • ${base}@${k}`
+              pts.push({ category: label, x: xb, y: yv, color })
+            }
+          }
+        }
+      }
+      return pts
+    }
 
-    // Assign a stable color per base (group color)
+    // Per-base path: one or more ks per selected metric base
+    if (bases.length === 0) return []
     const baseToColor = new Map<string, string>()
     bases.forEach((base, i) => {
       const hue = Math.round((i * 360) / bases.length)
       const col = `hsl(${hue}, 70%, ${isDark ? 60 : 45}%)`
       baseToColor.set(base, col)
     })
-
     type P = { category: string; x: number; y: number; color?: string }
     const pts: P[] = []
     for (const cat of paretoCategories) {
       const mapB = buildMetricMap(cat, b.data?.[cat])
       const mapV = buildMetricMap(cat, v.data?.[cat])
       for (const base of bases) {
-        for (const k of ksUse) {
+        const ksSel = paretoMetricKByBase[base] || []
+        for (const kSel of ksSel) {
           let xb: number | null = null
           let yv: number | null = null
           for (const [mk, mv] of Object.entries(mapB)) {
             const parsed = parseMetricName(mk)
-            if (parsed.base === base && parsed.k === k) {
+            if (parsed.base === base && parsed.k === kSel) {
               const num = typeof mv === 'number' ? mv : Number(mv)
               if (Number.isFinite(num)) xb = num
             }
           }
           for (const [mk, mv] of Object.entries(mapV)) {
             const parsed = parseMetricName(mk)
-            if (parsed.base === base && parsed.k === k) {
+            if (parsed.base === base && parsed.k === kSel) {
               const num = typeof mv === 'number' ? mv : Number(mv)
               if (Number.isFinite(num)) yv = num
             }
           }
           if (xb != null && yv != null) {
             const color = baseToColor.get(base)
-            const label = `${cat} • ${base}@${k}`
+            const label = `${cat} • ${base}@${kSel}`
             pts.push({ category: label, x: xb, y: yv, color })
           }
         }
       }
     }
     return pts
-  }, [paretoBaseline, paretoVariant, paretoMetricBasesSel, paretoKsSel, paretoMetricBase, paretoK, paretoCategories, filesCache, isDark])
+  }, [paretoBaseline, paretoVariant, paretoMetricBasesSel, paretoMetricBase, paretoCategories, filesCache, isDark, paretoMetricKByBase, paretoKsSel, paretoK])
 
   // Metric parsing helpers for charting
   // parseMetricName imported from utils
@@ -1787,19 +1873,26 @@ function App() {
                           allowClear
                           getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
                         />
-                        <Select
-                          mode="multiple"
-                          style={{ minWidth: 200, marginLeft: 8 }}
-                          placeholder="k value(s)"
-                          value={paretoKsSel}
-                          onChange={(vals) => {
-                            setParetoKsSel(vals)
-                            if (vals.length) setParetoK(null)
-                          }}
-                          options={(paretoMetricBasesSel.length > 0 ? paretoKsMulti : paretoKs).map((k) => ({ label: String(k), value: k }))}
-                          allowClear
-                          getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
-                        />
+                        {/* Removed global k dropdown (now using per-base multi-k selectors) */}
+                        {paretoMetricBasesSel.length > 0 && (
+                          <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                            {paretoMetricBasesSel.map((base) => (
+                              <div key={base} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <Tag color={isDark ? '#555' : '#ddd'} style={{ color: isDark ? '#fff' : '#333' }}>{base}</Tag>
+                                <Select
+                                  mode="multiple"
+                                  size="small"
+                                  style={{ width: 140 }}
+                                  value={paretoMetricKByBase[base] ?? []}
+                                  onChange={(vals) => setParetoMetricKByBase((prev) => ({ ...prev, [base]: vals }))}
+                                  options={(paretoKsByBase[base] || []).map((k) => ({ label: String(k), value: k }))}
+                                  placeholder="k(s)"
+                                  getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                       <div>
                         <div className="form-label" style={{ marginBottom: 4 }}>Display</div>
@@ -1843,6 +1936,7 @@ function App() {
                                 categories: paretoCategories,
                                 metricBases: paretoMetricBasesSel.length ? paretoMetricBasesSel : (paretoMetricBase ? [paretoMetricBase] : []),
                                 ks: paretoKsSel.length ? paretoKsSel : (paretoK != null ? [paretoK] : []),
+                                metricKByBase: paretoMetricKByBase,
                                 showFrontier: paretoShowFrontier,
                                 showDiagonal: paretoShowDiagonal,
                                 maximize: paretoMaximizeMode,

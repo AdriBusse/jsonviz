@@ -28,6 +28,8 @@ export type SavedPareto = {
   // New multi-select support
   metricBases?: string[]
   ks?: number[]
+  // New: per-metric base -> selected k(s) mapping
+  metricKByBase?: Record<string, number[]>
   // New tri-state maximize control: 'y' | 'none' | 'x'
   maximize?: 'y' | 'none' | 'x'
   showFrontier: boolean
