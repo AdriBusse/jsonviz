@@ -7,6 +7,7 @@ import HeaderTitle from './components/HeaderTitle'
 import ChartInfo from './components/ChartInfo'
 import LineChart from './components/LineChart'
 import ParetoChart from './components/ParetoChart'
+import RadarChart from './components/RadarChart'
 import { buildMetricMap, getMetricDescription, parseMetricName } from './utils/metrics'
 import type { Manifest, LoadedFile, SavedFilter, SavedSuite, DiagramSpec, Series, SavedPareto } from './types'
 
@@ -23,6 +24,7 @@ function App() {
   const selectionRef = useRef<HTMLDivElement | null>(null)
   const diagramSvgRefs = useRef<Record<number, SVGSVGElement | null>>({})
   const paretoSvgRefs = useRef<Record<number, SVGSVGElement | null>>({})
+  const radarSvgRef = useRef<SVGSVGElement | null>(null)
   // Diagram preview modal state
   const [previewDiagram, setPreviewDiagram] = useState<{ key: string; metricBase: string } | null>(null)
   // Saved reusable filters (initialize from localStorage to avoid first-render overwrite)
@@ -459,6 +461,12 @@ function App() {
         maximizeX: !!s.maximizeX,
         maximizeY: !!s.maximizeY,
       })),
+      // Radar
+      radar: {
+        categories: Array.isArray(radarCategories) ? radarCategories : [],
+        metricBase: radarMetricBase ?? null,
+        k: radarK ?? null,
+      },
     }
   }
 
@@ -813,6 +821,237 @@ function App() {
       setParetoCategories(likely.length ? likely : commonDataKeys.slice(0, Math.min(8, commonDataKeys.length)))
     }
   }, [selectedValidFiles, commonDataKeys])
+
+  // ----- Radar (categories across files at base@k) -----
+  const [radarCategories, setRadarCategories] = useState<string[]>([])
+  const [radarMetricBase, setRadarMetricBase] = useState<string | null>(null)
+  const [radarK, setRadarK] = useState<number | null>(null)
+
+  // Default categories similar to Pareto on first load/selection
+  useEffect(() => {
+    if (radarCategories.length === 0 && commonDataKeys.length > 0) {
+      const likely = commonDataKeys.filter((k) => /gold|generic|synonym|short|shorten|shortened/i.test(k))
+      setRadarCategories(likely.length ? likely : commonDataKeys.slice(0, Math.min(8, commonDataKeys.length)))
+    }
+  }, [commonDataKeys])
+
+  const selectedRadarFiles = useMemo(() => {
+    return Array.from(selected)
+      .map((p) => filesCache[p])
+      .filter((f): f is LoadedFile => !!f && f.valid)
+  }, [selected, filesCache])
+
+  // Available metric bases for current radar categories across all selected files (intersection)
+  const radarMetricBases = useMemo(() => {
+    const bases = new Set<string>()
+    if (selectedRadarFiles.length === 0 || radarCategories.length === 0) return [] as string[]
+    const counts: Record<string, number> = {}
+    for (const f of selectedRadarFiles) {
+      for (const cat of radarCategories) {
+        const map = buildMetricMap(cat, f.data?.[cat])
+        const set = new Set(Object.keys(map).map((m) => parseMetricName(m)).filter((x) => x.k != null).map((x) => x.base))
+        for (const b of set) counts[b] = (counts[b] || 0) + 1
+      }
+    }
+    const need = selectedRadarFiles.length * radarCategories.length
+    for (const [b, c] of Object.entries(counts)) if (c === need) bases.add(b)
+    return Array.from(bases).sort()
+  }, [selectedRadarFiles, radarCategories])
+
+  // Available ks for chosen base across all selected files and categories (intersection)
+  const radarKs = useMemo(() => {
+    const out = new Set<number>()
+    if (!radarMetricBase || selectedRadarFiles.length === 0 || radarCategories.length === 0) return [] as number[]
+    // Build intersection by counting presence per file-category
+    const counts: Record<number, number> = {}
+    for (const f of selectedRadarFiles) {
+      for (const cat of radarCategories) {
+        const map = buildMetricMap(cat, f.data?.[cat])
+        const ks = new Set(
+          Object.keys(map)
+            .map((m) => parseMetricName(m))
+            .filter((x) => x.base === radarMetricBase && x.k != null)
+            .map((x) => x.k as number)
+        )
+        ks.forEach((k) => { counts[k] = (counts[k] || 0) + 1 })
+      }
+    }
+    const need = selectedRadarFiles.length * radarCategories.length
+    for (const [k, c] of Object.entries(counts)) if (c === need) out.add(Number(k))
+    return Array.from(out).sort((a, b) => a - b)
+  }, [radarMetricBase, selectedRadarFiles, radarCategories])
+
+  // Keep radar base/k defaults in sync with availability
+  useEffect(() => {
+    if (radarMetricBases.length > 0 && (!radarMetricBase || !radarMetricBases.includes(radarMetricBase))) {
+      setRadarMetricBase(radarMetricBases[0])
+    }
+    if (radarMetricBases.length === 0) {
+      setRadarMetricBase(null)
+      setRadarK(null)
+    }
+  }, [radarMetricBases])
+
+  useEffect(() => {
+    if (radarKs.length > 0 && (radarK == null || !radarKs.includes(radarK))) {
+      setRadarK(radarKs[0])
+    }
+    if (radarMetricBase && radarKs.length === 0) {
+      setRadarK(null)
+    }
+  }, [radarKs, radarMetricBase])
+
+  // Build radar series per selected file
+  const radarSeries = useMemo(() => {
+    if (!radarMetricBase || radarK == null || radarCategories.length === 0) return [] as { name: string; values: number[]; color: string }[]
+    const total = selectedRadarFiles.length
+    return selectedRadarFiles.map((f, idx) => {
+      const color = colorForIndex(idx, total)
+      const values = radarCategories.map((cat) => {
+        const map = buildMetricMap(cat, f.data?.[cat])
+        let val: number | null = null
+        for (const [m, v] of Object.entries(map)) {
+          const { base, k } = parseMetricName(m)
+          if (base === radarMetricBase && k === radarK) {
+            const num = typeof v === 'number' ? v : Number(v)
+            if (Number.isFinite(num)) { val = num; break }
+          }
+        }
+        return val ?? 0
+      })
+      return { name: f.name || f.path, values, color }
+    })
+  }, [selectedRadarFiles, radarCategories, radarMetricBase, radarK, isDark])
+
+  // Export Radar SVG
+  function downloadRadarSvg(useDarkBg: boolean) {
+    const src = radarSvgRef.current
+    if (!src) { message.error('Radar chart not ready to export'); return }
+    const NS = 'http://www.w3.org/2000/svg'
+    const margin = 16
+    const titleFontSize = 14
+    const titleHeight = titleFontSize + 8
+    const chartW = 860
+    const chartH = 520
+    const totalW = margin + chartW + margin
+    const totalH = margin + titleHeight + chartH + margin
+    const outSvg = document.createElementNS(NS, 'svg')
+    outSvg.setAttribute('xmlns', NS)
+    outSvg.setAttribute('width', String(totalW))
+    outSvg.setAttribute('height', String(totalH))
+    const bg = document.createElementNS(NS, 'rect')
+    bg.setAttribute('x', '0')
+    bg.setAttribute('y', '0')
+    bg.setAttribute('width', String(totalW))
+    bg.setAttribute('height', String(totalH))
+    bg.setAttribute('fill', useDarkBg ? '#111' : '#ffffff')
+    outSvg.appendChild(bg)
+    const title = document.createElementNS(NS, 'text')
+    title.setAttribute('x', String(margin))
+    title.setAttribute('y', String(margin + titleFontSize))
+    title.setAttribute('font-size', String(titleFontSize))
+    title.setAttribute('font-family', 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif')
+    title.setAttribute('fill', useDarkBg ? '#ddd' : '#333')
+    const catsTxt = radarCategories.join(', ')
+    const titleText = radarMetricBase && radarK != null ? `Radar: ${radarMetricBase}@${radarK} — ${catsTxt}` : 'Radar'
+    title.textContent = titleText
+    outSvg.appendChild(title)
+    const chartGroup = document.createElementNS(NS, 'g')
+    chartGroup.setAttribute('transform', `translate(${margin}, ${margin + titleHeight})`)
+    const cloned = src.cloneNode(true) as SVGSVGElement
+    cloned.removeAttribute('width')
+    cloned.removeAttribute('height')
+    const wrap = document.createElementNS(NS, 'g')
+    while (cloned.firstChild) wrap.appendChild(cloned.firstChild)
+    chartGroup.appendChild(wrap)
+    outSvg.appendChild(chartGroup)
+    const xml = new XMLSerializer().serializeToString(outSvg)
+    const blob = new Blob([xml], { type: 'image/svg+xml;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const compName = (activeSuiteId && savedSuites.find((x) => x.id === activeSuiteId)?.name) || 'comparison'
+    const baseK = radarMetricBase && radarK != null ? `${radarMetricBase}@${radarK}` : 'metric'
+    const file = sanitizeFilename(`${compName}_radar_${baseK}.svg`)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = file
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  // Export Radar PNG
+  function downloadRadarPng(useDarkBg: boolean) {
+    const src = radarSvgRef.current
+    if (!src) { message.error('Radar chart not ready to export'); return }
+    const NS = 'http://www.w3.org/2000/svg'
+    const margin = 16
+    const titleFontSize = 14
+    const titleHeight = titleFontSize + 8
+    const chartW = 860
+    const chartH = 520
+    const totalW = margin + chartW + margin
+    const totalH = margin + titleHeight + chartH + margin
+    const outSvg = document.createElementNS(NS, 'svg')
+    outSvg.setAttribute('xmlns', NS)
+    outSvg.setAttribute('width', String(totalW))
+    outSvg.setAttribute('height', String(totalH))
+    const bg = document.createElementNS(NS, 'rect')
+    bg.setAttribute('x', '0')
+    bg.setAttribute('y', '0')
+    bg.setAttribute('width', String(totalW))
+    bg.setAttribute('height', String(totalH))
+    bg.setAttribute('fill', useDarkBg ? '#111' : '#ffffff')
+    outSvg.appendChild(bg)
+    const title = document.createElementNS(NS, 'text')
+    title.setAttribute('x', String(margin))
+    title.setAttribute('y', String(margin + titleFontSize))
+    title.setAttribute('font-size', String(titleFontSize))
+    title.setAttribute('font-family', 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif')
+    title.setAttribute('fill', useDarkBg ? '#ddd' : '#333')
+    const catsTxt = radarCategories.join(', ')
+    const titleText = radarMetricBase && radarK != null ? `Radar: ${radarMetricBase}@${radarK} — ${catsTxt}` : 'Radar'
+    title.textContent = titleText
+    outSvg.appendChild(title)
+    const chartGroup = document.createElementNS(NS, 'g')
+    chartGroup.setAttribute('transform', `translate(${margin}, ${margin + titleHeight})`)
+    const cloned = src.cloneNode(true) as SVGSVGElement
+    cloned.removeAttribute('width')
+    cloned.removeAttribute('height')
+    const wrap = document.createElementNS(NS, 'g')
+    while (cloned.firstChild) wrap.appendChild(cloned.firstChild)
+    chartGroup.appendChild(wrap)
+    outSvg.appendChild(chartGroup)
+    const xml = new XMLSerializer().serializeToString(outSvg)
+    const svgBlob = new Blob([xml], { type: 'image/svg+xml;charset=utf-8' })
+    const url = URL.createObjectURL(svgBlob)
+    const img = new Image()
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = totalW
+      canvas.height = totalH
+      const ctx = canvas.getContext('2d')!
+      ctx.fillStyle = useDarkBg ? '#111' : '#ffffff'
+      ctx.fillRect(0, 0, totalW, totalH)
+      ctx.drawImage(img, 0, 0)
+      URL.revokeObjectURL(url)
+      canvas.toBlob((blob) => {
+        if (!blob) return
+        const url2 = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        const compName = (activeSuiteId && savedSuites.find((x) => x.id === activeSuiteId)?.name) || 'comparison'
+        const baseK = radarMetricBase && radarK != null ? `${radarMetricBase}@${radarK}` : 'metric'
+        const file = sanitizeFilename(`${compName}_radar_${baseK}.png`)
+        a.href = url2
+        a.download = file
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        URL.revokeObjectURL(url2)
+      }, 'image/png')
+    }
+    img.src = url
+  }
 
   // Collect available metric bases (intersection across chosen files and categories)
   const paretoMetricBases = useMemo(() => {
@@ -1937,6 +2176,101 @@ function App() {
                     </div>
                   )}
                 </>
+              ),
+            },
+            {
+              key: 'radar',
+              label: <span style={{ color: isDark ? '#fff' : '#000' }}>Radar</span>,
+              children: (
+                <div style={{ color: isDark ? '#fff' : '#000' }}>
+                  <Divider orientation="left">Radar Chart</Divider>
+                  <Space wrap size={12} style={{ marginBottom: 8 }}>
+                    <div>
+                      <div className="form-label" style={{ marginBottom: 4 }}>Categories</div>
+                      <Select
+                        mode="multiple"
+                        style={{ minWidth: 360 }}
+                        placeholder="Select categories (data keys)"
+                        value={radarCategories}
+                        onChange={(vals) => setRadarCategories(vals)}
+                        options={commonDataKeys.map((k) => ({ label: k, value: k }))}
+                        getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
+                      />
+                    </div>
+                    <div>
+                      <div className="form-label" style={{ marginBottom: 4 }}>Metric base</div>
+                      <Select
+                        style={{ width: 200 }}
+                        placeholder="Metric"
+                        options={radarMetricBases.map((b: string) => {
+                          const desc = getMetricDescription(b)
+                          return {
+                            label: (
+                              <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                                {b.toUpperCase()}
+                                {desc && (
+                                  <Tooltip title={desc}>
+                                    <InfoCircleOutlined style={{ marginLeft: 6, color: isDark ? '#bbb' : '#999' }} />
+                                  </Tooltip>
+                                )}
+                              </span>
+                            ),
+                            value: b,
+                          }
+                        })}
+                        value={radarMetricBase ?? undefined}
+                        onChange={(v) => setRadarMetricBase(v)}
+                        getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
+                      />
+                    </div>
+                    <div>
+                      <div className="form-label" style={{ marginBottom: 4 }}>k</div>
+                      <Select
+                        style={{ width: 140 }}
+                        placeholder="k"
+                        options={radarKs.map((k) => ({ label: String(k), value: k }))}
+                        value={radarK ?? undefined}
+                        onChange={(v) => setRadarK(v)}
+                        getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
+                        disabled={!radarMetricBase}
+                      />
+                    </div>
+                    {radarSeries.length > 0 && (
+                      <Dropdown
+                        menu={{
+                          items: [
+                            { key: 'png-light', label: 'PNG (Light bg)' },
+                            { key: 'png-dark', label: 'PNG (Dark bg)' },
+                            { key: 'svg', label: 'SVG' },
+                          ],
+                          onClick: ({ key }) => {
+                            if (key === 'png-light') downloadRadarPng(false)
+                            else if (key === 'png-dark') downloadRadarPng(true)
+                            else if (key === 'svg') downloadRadarSvg(isDark)
+                          },
+                        }}
+                      >
+                        <Button size="small" icon={<DownloadOutlined />}>Download</Button>
+                      </Dropdown>
+                    )}
+                  </Space>
+                  <div style={{ marginTop: 8 }}>
+                    {selected.size === 0 && <div style={{ color: isDark ? '#aaa' : '#888' }}>Select one or more files above.</div>}
+                    {selected.size > 0 && (!radarMetricBase || radarK == null || radarCategories.length === 0) && (
+                      <div style={{ color: isDark ? '#aaa' : '#888' }}>Pick categories, metric base and k.</div>
+                    )}
+                    {radarSeries.length > 0 && (
+                      <RadarChart
+                        categories={radarCategories}
+                        series={radarSeries}
+                        width={860}
+                        height={520}
+                        isDark={isDark}
+                        exportRef={(el: SVGSVGElement | null) => { radarSvgRef.current = el }}
+                      />
+                    )}
+                  </div>
+                </div>
               ),
             },
             {

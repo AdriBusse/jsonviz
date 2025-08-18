@@ -38,6 +38,12 @@ export type SavedPareto = {
   maximizeY: boolean
 }
 
+export type SavedRadar = {
+  categories: string[]
+  metricBase: string | null
+  k: number | null
+}
+
 export type SavedSuite = {
   id: string
   name: string
@@ -51,6 +57,8 @@ export type SavedSuite = {
   pareto?: SavedPareto
   // New: multiple Pareto charts per suite
   paretoSections?: SavedPareto[]
+  // New: radar chart configuration
+  radar?: SavedRadar
 }
 
 export type DiagramSpec = { key: string | null; metricBase: string | null }
