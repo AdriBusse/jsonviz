@@ -1755,7 +1755,22 @@ function App() {
                                 size="small"
                                 style={{ width: 160 }}
                                 placeholder="Metric"
-                                options={metricBases.map((b: string) => ({ label: b.toUpperCase(), value: b }))}
+                                options={metricBases.map((b: string) => {
+                                  const desc = getMetricDescription(b)
+                                  return {
+                                    label: (
+                                      <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                                        {b.toUpperCase()}
+                                        {desc && (
+                                          <Tooltip title={desc}>
+                                            <InfoCircleOutlined style={{ marginLeft: 6, color: isDark ? '#bbb' : '#999' }} />
+                                          </Tooltip>
+                                        )}
+                                      </span>
+                                    ),
+                                    value: b,
+                                  }
+                                })}
                                 value={spec.metricBase ?? undefined}
                                 onChange={(v) => {
                                   setDiagramSections((prev) => {
@@ -1869,28 +1884,54 @@ function App() {
                             // Clear single selection to avoid confusion
                             if (vals.length) setParetoMetricBase(null)
                           }}
-                          options={paretoMetricBases.map((b) => ({ label: b, value: b }))}
-                          allowClear
+                          options={paretoMetricBases.map((b) => {
+                            const desc = getMetricDescription(b)
+                            return {
+                              label: (
+                                <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                                  {b.toUpperCase()}
+                                  {desc && (
+                                    <Tooltip title={desc}>
+                                      <InfoCircleOutlined style={{ marginLeft: 6, color: isDark ? '#bbb' : '#999' }} />
+                                    </Tooltip>
+                                  )}
+                                </span>
+                              ),
+                              value: b,
+                            }
+                          })}
                           getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
                         />
                         {/* Removed global k dropdown (now using per-base multi-k selectors) */}
                         {paretoMetricBasesSel.length > 0 && (
                           <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                            {paretoMetricBasesSel.map((base) => (
-                              <div key={base} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                <Tag color={isDark ? '#555' : '#ddd'} style={{ color: isDark ? '#fff' : '#333' }}>{base}</Tag>
-                                <Select
-                                  mode="multiple"
-                                  size="small"
-                                  style={{ width: 140 }}
-                                  value={paretoMetricKByBase[base] ?? []}
-                                  onChange={(vals) => setParetoMetricKByBase((prev) => ({ ...prev, [base]: vals }))}
-                                  options={(paretoKsByBase[base] || []).map((k) => ({ label: String(k), value: k }))}
-                                  placeholder="k(s)"
-                                  getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
-                                />
-                              </div>
-                            ))}
+                            {paretoMetricBasesSel.map((base) => {
+                              const desc = getMetricDescription(base)
+                              return (
+                                <div key={base} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                  <Tag color={isDark ? '#555' : '#ddd'} style={{ color: isDark ? '#fff' : '#333' }}>
+                                    <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                                      {base}
+                                      {desc && (
+                                        <Tooltip title={desc}>
+                                          <InfoCircleOutlined style={{ marginLeft: 6, color: isDark ? '#bbb' : '#999' }} />
+                                        </Tooltip>
+                                      )}
+                                    </span>
+                                  </Tag>
+                                  <Select
+                                    mode="multiple"
+                                    size="small"
+                                    style={{ width: 140 }}
+                                    value={paretoMetricKByBase[base] ?? []}
+                                    onChange={(vals) => setParetoMetricKByBase((prev) => ({ ...prev, [base]: vals }))}
+                                    options={(paretoKsByBase[base] || []).map((k) => ({ label: String(k), value: k }))}
+                                    placeholder="k(s)"
+                                    getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
+                                  />
+                                </div>
+                              )
+                            })}
                           </div>
                         )}
                       </div>
