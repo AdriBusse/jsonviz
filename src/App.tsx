@@ -412,21 +412,53 @@ function App() {
       sectionFilters: compactFilters,
       sectionRows: compactRows,
       diagramSections: diagramsCompact,
-      pareto: {
+      // Back-compat single pareto (use first section or current single state)
+      pareto: (() => {
+        const first = (paretoSections || []).find((s) => (s.metricBases && s.metricBases.length) || (s.metricBase && s.metricBase.length))
+        const baseSec = first || {
+          metricBase: paretoMetricBase,
+          k: paretoK,
+          metricBases: paretoMetricBasesSel,
+          ks: paretoKsSel,
+          metricKByBase: paretoMetricKByBase,
+          showFrontier: paretoShowFrontier,
+          showDiagonal: paretoShowDiagonal,
+          maximize: paretoMaximizeMode,
+          maximizeX: paretoMaximizeMode === 'x',
+          maximizeY: paretoMaximizeMode === 'y',
+        } as Partial<SavedPareto>
+        return {
+          baseline: paretoBaseline,
+          variant: paretoVariant,
+          categories: (Array.isArray((baseSec as any).categories) && (baseSec as any).categories.length > 0) ? (baseSec as any).categories : paretoCategories,
+          metricBase: baseSec.metricBase ?? null,
+          k: baseSec.k ?? null,
+          metricBases: baseSec.metricBases ?? [],
+          ks: baseSec.ks ?? [],
+          metricKByBase: baseSec.metricKByBase ?? {},
+          showFrontier: !!baseSec.showFrontier,
+          showDiagonal: !!baseSec.showDiagonal,
+          maximize: (baseSec.maximize as 'y' | 'none' | 'x') ?? 'none',
+          maximizeX: !!baseSec.maximizeX,
+          maximizeY: !!baseSec.maximizeY,
+        } as SavedPareto
+      })(),
+      // New: all pareto sections; embed current globals (baseline/variant/categories)
+      paretoSections: (paretoSections || []).map((s) => ({
         baseline: paretoBaseline,
         variant: paretoVariant,
-        categories: paretoCategories,
-        metricBase: paretoMetricBase,
-        k: paretoK,
-        metricBases: paretoMetricBasesSel,
-        ks: paretoKsSel,
-        metricKByBase: paretoMetricKByBase,
-        showFrontier: paretoShowFrontier,
-        showDiagonal: paretoShowDiagonal,
-        maximize: paretoMaximizeMode,
-        maximizeX: paretoMaximizeMode === 'x',
-        maximizeY: paretoMaximizeMode === 'y',
-      },
+        categories: Array.isArray(s.categories) ? s.categories : [],
+        metricBase: s.metricBase ?? null,
+        k: s.k ?? null,
+        metricBases: s.metricBases ?? [],
+        ks: s.ks ?? [],
+        metricKByBase: s.metricKByBase ?? {},
+        showFrontier: !!s.showFrontier,
+        showDiagonal: !!s.showDiagonal,
+        maximize: (s.maximize as 'y' | 'none' | 'x') ?? 'none',
+        maximizeX: !!s.maximizeX,
+        maximizeY: !!s.maximizeY,
+      })),
     }
   }
 
@@ -442,7 +474,7 @@ function App() {
     // show a clean placeholder until diagrams can be applied
     setDiagramSections([{ key: null, metricBase: null }])
     setActiveSuiteId(suite.id)
-    // Apply Pareto settings if present
+    // Apply Pareto settings if present (single + multiple)
     if (suite.pareto) {
       setParetoBaseline(suite.pareto.baseline ?? null)
       setParetoVariant(suite.pareto.variant ?? null)
@@ -473,6 +505,46 @@ function App() {
         const my = !!suite.pareto.maximizeY
         setParetoMaximizeMode(mx && !my ? 'x' : my && !mx ? 'y' : 'none')
       }
+    }
+    // Apply multi Pareto sections if present
+    if (suite.paretoSections && Array.isArray(suite.paretoSections) && suite.paretoSections.length > 0) {
+      const first = suite.paretoSections[0]
+      setParetoBaseline(first.baseline ?? null)
+      setParetoVariant(first.variant ?? null)
+      setParetoCategories(Array.isArray(first.categories) ? first.categories : [])
+      const normalized = suite.paretoSections.map((s) => ({
+        baseline: s.baseline ?? null,
+        variant: s.variant ?? null,
+        categories: Array.isArray(s.categories) ? s.categories : [],
+        metricBase: s.metricBase ?? null,
+        k: s.k ?? null,
+        metricBases: Array.isArray(s.metricBases) ? s.metricBases : [],
+        ks: Array.isArray(s.ks) ? s.ks : [],
+        metricKByBase: s.metricKByBase ?? {},
+        showFrontier: !!s.showFrontier,
+        showDiagonal: !!s.showDiagonal,
+        maximize: (s.maximize as 'y' | 'none' | 'x') ?? 'none',
+        maximizeX: !!s.maximizeX,
+        maximizeY: !!s.maximizeY,
+      }))
+      setParetoSections(normalized)
+    } else {
+      // Ensure at least one placeholder section exists
+      setParetoSections([
+        {
+          baseline: null,
+          variant: null,
+          categories: paretoCategories,
+          metricBases: [],
+          ks: [],
+          metricKByBase: {},
+          showFrontier: true,
+          showDiagonal: true,
+          maximize: 'none',
+          maximizeX: false,
+          maximizeY: false,
+        },
+      ])
     }
     message.success(`Loaded "${suite.name}"`)
   }
@@ -714,6 +786,23 @@ function App() {
   const [paretoShowDiagonal, setParetoShowDiagonal] = useState(true)
   const [paretoMaximizeMode, setParetoMaximizeMode] = useState<'y' | 'none' | 'x'>('none')
 
+  // Multiple Pareto sections (stacked charts). Each section controls its own metric selections and display.
+  const [paretoSections, setParetoSections] = useState<SavedPareto[]>([
+    {
+      baseline: null,
+      variant: null,
+      categories: paretoCategories,
+      metricBases: [],
+      ks: [],
+      metricKByBase: {},
+      showFrontier: true,
+      showDiagonal: true,
+      maximize: 'none',
+      maximizeX: false,
+      maximizeY: false,
+    },
+  ])
+
   // Initialize defaults when selection changes
   useEffect(() => {
     if (!paretoBaseline && selectedValidFiles[0]) setParetoBaseline(selectedValidFiles[0].path)
@@ -823,27 +912,49 @@ function App() {
     })
   }, [paretoMetricBasesSel, paretoKsByBase])
 
-  const paretoPoints = useMemo(() => {
-    if (!paretoBaseline || !paretoVariant) return []
+  // Helpers for per-section Pareto UI
+  function getParetoKsByBaseFor(bases: string[], cats: string[]): Record<string, number[]> {
+    const out: Record<string, number[]> = {}
+    if (!paretoBaseline || !paretoVariant) return out
+    const b = filesCache[paretoBaseline]
+    const v = filesCache[paretoVariant]
+    if (!b || !v) return out
+    for (const base of bases) {
+      const counter: Record<number, number> = {}
+      for (const cat of cats) {
+        const mapB = buildMetricMap(cat, b.data?.[cat])
+        const mapV = buildMetricMap(cat, v.data?.[cat])
+        const ksB = new Set(Object.keys(mapB).map((m) => parseMetricName(m)).filter((x) => x.base === base && x.k != null).map((x) => x.k as number))
+        const ksV = new Set(Object.keys(mapV).map((m) => parseMetricName(m)).filter((x) => x.base === base && x.k != null).map((x) => x.k as number))
+        for (const k of ksB) { if (ksV.has(k)) counter[k] = (counter[k] || 0) + 1 }
+      }
+      out[base] = Object.entries(counter)
+        .filter(([, c]) => c === cats.length)
+        .map(([k]) => Number(k))
+        .sort((a, b) => a - b)
+    }
+    return out
+  }
+
+  function buildParetoPointsForSection(sec: SavedPareto) {
+    if (!paretoBaseline || !paretoVariant) return [] as { category: string; x: number; y: number; color?: string }[]
     const b = filesCache[paretoBaseline]
     const v = filesCache[paretoVariant]
     if (!b || !v) return []
-    const bases = paretoMetricBasesSel.length > 0 ? paretoMetricBasesSel : (paretoMetricBase ? [paretoMetricBase] : [])
-    // In per-base mode require each base to have a selected k; otherwise fall back to single base+k selection
-    const usingPerBase = paretoMetricBasesSel.length > 0
+    const bases = (sec.metricBases && sec.metricBases.length > 0) ? sec.metricBases : ((sec.metricBase ? [sec.metricBase] : []) as string[])
+    const cats = (sec.categories && sec.categories.length > 0) ? sec.categories : paretoCategories
+    const usingPerBase = (sec.metricBases && sec.metricBases.length > 0)
     if (!usingPerBase) {
-      const ksUse = paretoKsSel.length > 0 ? paretoKsSel : (paretoK != null ? [paretoK] : [])
+      const ksUse = (sec.ks && sec.ks.length > 0) ? sec.ks : (sec.k != null ? [sec.k] : [])
       if (bases.length === 0 || ksUse.length === 0) return []
-      // Legacy path: combine base(s) with ksUse (should be single each in practice)
       const baseToColor = new Map<string, string>()
       bases.forEach((base, i) => {
         const hue = Math.round((i * 360) / bases.length)
         const col = `hsl(${hue}, 70%, ${isDark ? 60 : 45}%)`
         baseToColor.set(base, col)
       })
-      type P = { category: string; x: number; y: number; color?: string }
-      const pts: P[] = []
-      for (const cat of paretoCategories) {
+      const pts: { category: string; x: number; y: number; color?: string }[] = []
+      for (const cat of cats) {
         const mapB = buildMetricMap(cat, b.data?.[cat])
         const mapV = buildMetricMap(cat, v.data?.[cat])
         for (const base of bases) {
@@ -874,8 +985,7 @@ function App() {
       }
       return pts
     }
-
-    // Per-base path: one or more ks per selected metric base
+    // Per-base multi-k per base
     if (bases.length === 0) return []
     const baseToColor = new Map<string, string>()
     bases.forEach((base, i) => {
@@ -883,13 +993,12 @@ function App() {
       const col = `hsl(${hue}, 70%, ${isDark ? 60 : 45}%)`
       baseToColor.set(base, col)
     })
-    type P = { category: string; x: number; y: number; color?: string }
-    const pts: P[] = []
-    for (const cat of paretoCategories) {
+    const pts: { category: string; x: number; y: number; color?: string }[] = []
+    for (const cat of cats) {
       const mapB = buildMetricMap(cat, b.data?.[cat])
       const mapV = buildMetricMap(cat, v.data?.[cat])
       for (const base of bases) {
-        const ksSel = paretoMetricKByBase[base] || []
+        const ksSel = (sec.metricKByBase && sec.metricKByBase[base]) ? sec.metricKByBase[base] : []
         for (const kSel of ksSel) {
           let xb: number | null = null
           let yv: number | null = null
@@ -916,7 +1025,9 @@ function App() {
       }
     }
     return pts
-  }, [paretoBaseline, paretoVariant, paretoMetricBasesSel, paretoMetricBase, paretoCategories, filesCache, isDark, paretoMetricKByBase, paretoKsSel, paretoK])
+  }
+
+  
 
   // Metric parsing helpers for charting
   // parseMetricName imported from utils
@@ -1835,6 +1946,7 @@ function App() {
                 <div className={`pareto-pane ${isDark ? 'dark' : 'light'}`}>
                   <Divider orientation="left">Pareto Frontier Comparison</Divider>
                   <Space direction="vertical" style={{ width: '100%' }} size={12}>
+                    {/* Global selectors: shared across sections */}
                     <Space wrap>
                       <div>
                         <div className="form-label" style={{ marginBottom: 4 }}>Baseline method</div>
@@ -1871,162 +1983,249 @@ function App() {
                         />
                       </div>
                     </Space>
-                    <Space wrap>
-                      <div>
-                        <div className="form-label" style={{ marginBottom: 4 }}>Metrics & k</div>
-                        <Select
-                          mode="multiple"
-                          style={{ minWidth: 280 }}
-                          placeholder="Metric base(s)"
-                          value={paretoMetricBasesSel}
-                          onChange={(vals) => {
-                            setParetoMetricBasesSel(vals)
-                            // Clear single selection to avoid confusion
-                            if (vals.length) setParetoMetricBase(null)
-                          }}
-                          options={paretoMetricBases.map((b) => {
-                            const desc = getMetricDescription(b)
-                            return {
-                              label: (
-                                <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-                                  {b.toUpperCase()}
-                                  {desc && (
-                                    <Tooltip title={desc}>
-                                      <InfoCircleOutlined style={{ marginLeft: 6, color: isDark ? '#bbb' : '#999' }} />
-                                    </Tooltip>
-                                  )}
-                                </span>
-                              ),
-                              value: b,
-                            }
-                          })}
-                          getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
-                        />
-                        {/* Removed global k dropdown (now using per-base multi-k selectors) */}
-                        {paretoMetricBasesSel.length > 0 && (
-                          <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                            {paretoMetricBasesSel.map((base) => {
-                              const desc = getMetricDescription(base)
-                              return (
-                                <div key={base} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                  <Tag color={isDark ? '#555' : '#ddd'} style={{ color: isDark ? '#fff' : '#333' }}>
-                                    <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-                                      {base}
-                                      {desc && (
-                                        <Tooltip title={desc}>
-                                          <InfoCircleOutlined style={{ marginLeft: 6, color: isDark ? '#bbb' : '#999' }} />
-                                        </Tooltip>
-                                      )}
-                                    </span>
-                                  </Tag>
+                    {/* Sections: each has metrics + k + display + chart */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                      {paretoSections.map((sec, idx) => {
+                        const catsForSec = (sec.categories && sec.categories.length > 0) ? sec.categories : paretoCategories
+                        const ksByBase = getParetoKsByBaseFor(sec.metricBases && sec.metricBases.length ? sec.metricBases : [], catsForSec)
+                        const points = buildParetoPointsForSection(sec)
+                        const singleBase = sec.metricBases && sec.metricBases.length === 1 ? sec.metricBases[0] : (sec.metricBase || null)
+                        const singleKs = singleBase ? (sec.metricKByBase?.[singleBase] || (sec.ks && sec.ks.length ? sec.ks : (sec.k != null ? [sec.k] : []))) : []
+                        const showXLabel = singleBase && singleKs.length === 1 ? `${singleBase}@${singleKs[0]} (baseline)` : 'baseline'
+                        const showYLabel = singleBase && singleKs.length === 1 ? `${singleBase}@${singleKs[0]} (variant)` : 'variant'
+                        const isPlaceholder = (!sec.metricBases || sec.metricBases.length === 0) && !sec.metricBase
+                        return (
+                          <div key={`pareto-sec-${idx}`} style={{ border: '1px solid #e5e5e5', borderRadius: 8, padding: 12, color: isDark ? '#fff' : '#000' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                              <div style={{ fontWeight: 500 }}>Pareto section {idx + 1}</div>
+                              <Space>
+                                {/* Delete section (except keep at least one placeholder) */}
+                                {(!isPlaceholder || paretoSections.length > 1) && (
+                                  <Popconfirm title="Remove this section?" onConfirm={() => {
+                                    setParetoSections((prev) => {
+                                      const next = prev.filter((_, i) => i !== idx)
+                                      return next.length > 0 ? next : [{ baseline: null, variant: null, categories: paretoCategories, metricBases: [], ks: [], metricKByBase: {}, showFrontier: true, showDiagonal: true, maximize: 'none', maximizeX: false, maximizeY: false }]
+                                    })
+                                  }}>
+                                    <Button size="small" danger>Remove</Button>
+                                  </Popconfirm>
+                                )}
+                                <Dropdown
+                                  menu={{
+                                    items: [
+                                      { key: 'png-light', label: 'PNG (Light bg)' },
+                                      { key: 'png-dark', label: 'PNG (Dark bg)' },
+                                      { key: 'svg', label: 'SVG' },
+                                    ],
+                                    onClick: ({ key }) => {
+                                      const enriched: SavedPareto = {
+                                        ...sec,
+                                        baseline: paretoBaseline,
+                                        variant: paretoVariant,
+                                        categories: (sec.categories && sec.categories.length > 0) ? sec.categories : paretoCategories,
+                                        maximizeX: sec.maximize === 'x' || sec.maximizeX,
+                                        maximizeY: sec.maximize === 'y' || sec.maximizeY,
+                                      }
+                                      if (key === 'png-light') downloadParetoPngAt(idx, enriched, false)
+                                      else if (key === 'png-dark') downloadParetoPngAt(idx, enriched, true)
+                                      else if (key === 'svg') downloadParetoSvgAt(idx, enriched)
+                                    },
+                                  }}
+                                >
+                                  <Button size="small" icon={<DownloadOutlined />}>Download</Button>
+                                </Dropdown>
+                              </Space>
+                            </div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', marginBottom: 8 }}>
+                              <div>
+                                <div className="form-label" style={{ marginBottom: 4 }}>Categories (section)</div>
+                                <Select
+                                  mode="multiple"
+                                  style={{ minWidth: 260 }}
+                                  placeholder="Select categories"
+                                  value={(sec.categories && sec.categories.length > 0) ? sec.categories : paretoCategories}
+                                  onChange={(vals) => {
+                                    setParetoSections((prev) => {
+                                      const next = [...prev]
+                                      next[idx] = { ...next[idx], categories: vals as string[] }
+                                      if (idx === prev.length - 1 && isPlaceholder) {
+                                        next.push({ baseline: null, variant: null, categories: paretoCategories, metricBases: [], ks: [], metricKByBase: {}, showFrontier: true, showDiagonal: true, maximize: 'none', maximizeX: false, maximizeY: false })
+                                      }
+                                      return next
+                                    })
+                                  }}
+                                  options={commonDataKeys.map((k) => ({ label: k, value: k }))}
+                                  getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
+                                />
+                              </div>
+                              <div>
+                                <div className="form-label" style={{ marginBottom: 4 }}>Metric base(s)</div>
+                                <Select
+                                  mode="multiple"
+                                  style={{ minWidth: 260 }}
+                                  placeholder="Metric base(s)"
+                                  value={sec.metricBases ?? []}
+                                  onChange={(vals) => {
+                                    setParetoSections((prev) => {
+                                      const next = [...prev]
+                                      const updated: SavedPareto = {
+                                        ...next[idx],
+                                        baseline: paretoBaseline,
+                                        variant: paretoVariant,
+                                        // keep section-specific categories unchanged
+                                        metricBases: vals,
+                                        metricBase: null,
+                                      }
+                                      next[idx] = updated
+                                      // auto-add placeholder at end
+                                      if (idx === prev.length - 1) {
+                                        next.push({ baseline: null, variant: null, categories: paretoCategories, metricBases: [], ks: [], metricKByBase: {}, showFrontier: true, showDiagonal: true, maximize: 'none', maximizeX: false, maximizeY: false })
+                                      }
+                                      return next
+                                    })
+                                  }}
+                                  options={paretoMetricBases.map((b) => {
+                                    const desc = getMetricDescription(b)
+                                    return {
+                                      label: (
+                                        <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                                          {b.toUpperCase()}
+                                          {desc && (
+                                            <Tooltip title={desc}>
+                                              <InfoCircleOutlined style={{ marginLeft: 6, color: isDark ? '#bbb' : '#999' }} />
+                                            </Tooltip>
+                                          )}
+                                        </span>
+                                      ),
+                                      value: b,
+                                    }
+                                  })}
+                                  getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
+                                />
+                              </div>
+                              {sec.metricBases && sec.metricBases.length > 0 && (
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                                  {sec.metricBases.map((base) => {
+                                    const desc = getMetricDescription(base)
+                                    const selectedKs = sec.metricKByBase?.[base] ?? []
+                                    const options = (ksByBase[base] || []).map((k) => ({ label: String(k), value: k }))
+                                    return (
+                                      <div key={`${idx}-${base}`} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <Tag color={isDark ? '#555' : '#ddd'} style={{ color: isDark ? '#fff' : '#333' }}>
+                                          <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                                            {base}
+                                            {desc && (
+                                              <Tooltip title={desc}>
+                                                <InfoCircleOutlined style={{ marginLeft: 6, color: isDark ? '#bbb' : '#999' }} />
+                                              </Tooltip>
+                                            )}
+                                          </span>
+                                        </Tag>
+                                        <Select
+                                          mode="multiple"
+                                          size="small"
+                                          style={{ width: 140 }}
+                                          value={selectedKs}
+                                          onChange={(vals) => {
+                                            setParetoSections((prev) => {
+                                              const next = [...prev]
+                                              const mkb = { ...(next[idx].metricKByBase || {}) }
+                                              mkb[base] = vals as number[]
+                                              next[idx] = { ...next[idx], metricKByBase: mkb }
+                                              return next
+                                            })
+                                          }}
+                                          options={options}
+                                          placeholder="k(s)"
+                                          getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
+                                        />
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              )}
+                              {/* Legacy single selectors if no bases chosen */}
+                              {(!sec.metricBases || sec.metricBases.length === 0) && (
+                                <>
                                   <Select
-                                    mode="multiple"
-                                    size="small"
-                                    style={{ width: 140 }}
-                                    value={paretoMetricKByBase[base] ?? []}
-                                    onChange={(vals) => setParetoMetricKByBase((prev) => ({ ...prev, [base]: vals }))}
-                                    options={(paretoKsByBase[base] || []).map((k) => ({ label: String(k), value: k }))}
-                                    placeholder="k(s)"
+                                    style={{ width: 160 }}
+                                    placeholder="Metric"
+                                    value={sec.metricBase ?? undefined}
+                                    onChange={(v) => {
+                                      setParetoSections((prev) => {
+                                        const next = [...prev]
+                                        next[idx] = { ...next[idx], baseline: paretoBaseline, variant: paretoVariant, metricBase: v }
+                                        if (idx === prev.length - 1) next.push({ baseline: null, variant: null, categories: paretoCategories, metricBases: [], ks: [], metricKByBase: {}, showFrontier: true, showDiagonal: true, maximize: 'none', maximizeX: false, maximizeY: false })
+                                        return next
+                                      })
+                                    }}
+                                    options={paretoMetricBases.map((b) => ({ label: b.toUpperCase(), value: b }))}
                                     getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
                                   />
-                                </div>
-                              )
-                            })}
+                                  <Select
+                                    style={{ width: 120 }}
+                                    placeholder="k"
+                                    value={(sec.ks && sec.ks[0]) ?? (sec.k ?? undefined)}
+                                    onChange={(v) => {
+                                      setParetoSections((prev) => {
+                                        const next = [...prev]
+                                        const kVal = Number(v)
+                                        const hasKs = Array.isArray(next[idx].ks) && next[idx].ks!.length > 0
+                                        next[idx] = hasKs ? { ...next[idx], ks: [kVal] } : { ...next[idx], k: kVal }
+                                        if (idx === prev.length - 1) next.push({ baseline: null, variant: null, categories: paretoCategories, metricBases: [], ks: [], metricKByBase: {}, showFrontier: true, showDiagonal: true, maximize: 'none', maximizeX: false, maximizeY: false })
+                                        return next
+                                      })
+                                    }}
+                                    options={(sec.metricBase ? (getParetoKsByBaseFor([sec.metricBase], (sec.categories && sec.categories.length > 0) ? sec.categories : paretoCategories)[sec.metricBase] || []) : paretoKs).map((k) => ({ label: String(k), value: k }))}
+                                    getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
+                                  />
+                                </>
+                              )}
+                              <div style={{ marginLeft: 'auto' }}>
+                                <div className="form-label" style={{ marginBottom: 4 }}>Display</div>
+                                <Space>
+                                  <span className="form-inline-label">Frontier</span>
+                                  <Switch checked={!!sec.showFrontier} onChange={(val) => setParetoSections((prev) => { const next = [...prev]; next[idx] = { ...next[idx], showFrontier: val }; return next })} />
+                                  <span className="form-inline-label">Diagonal</span>
+                                  <Switch checked={!!sec.showDiagonal} onChange={(val) => setParetoSections((prev) => { const next = [...prev]; next[idx] = { ...next[idx], showDiagonal: val }; return next })} />
+                                  <span className="form-inline-label">Maximize</span>
+                                  <Segmented
+                                    size="small"
+                                    options={[
+                                      { label: (<span><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 999, background: '#2ca02c', marginRight: 6 }} />Y</span>), value: 'y' },
+                                      { label: (<span><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 999, background: '#8a8a8a', marginRight: 6 }} />None</span>), value: 'none' },
+                                      { label: (<span><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 999, background: '#d67c00', marginRight: 6 }} />X</span>), value: 'x' },
+                                    ]}
+                                    value={sec.maximize ?? 'none'}
+                                    onChange={(v) => setParetoSections((prev) => { const next = [...prev]; next[idx] = { ...next[idx], maximize: v as 'y' | 'none' | 'x', maximizeX: v === 'x', maximizeY: v === 'y' }; return next })}
+                                    className={`tri tri-${sec.maximize ?? 'none'}`}
+                                  />
+                                </Space>
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                              <div style={{ color: isDark ? '#aaa' : '#666', maxWidth: 900, fontSize: 12, alignSelf: 'center', textAlign: 'center' }}>
+                                Compare categories by plotting baseline (X) vs variant (Y) for the selected metric and k. Points above the diagonal favor the variant.
+                              </div>
+                              <div style={{ alignSelf: 'center' }}>
+                                <ParetoChart
+                                  points={points}
+                                  width={900}
+                                  height={520}
+                                  isDark={isDark}
+                                  xLabel={showXLabel}
+                                  yLabel={showYLabel}
+                                  showFrontier={!!sec.showFrontier}
+                                  showDiagonal={!!sec.showDiagonal}
+                                  maximizeX={!!sec.maximizeX || sec.maximize === 'x'}
+                                  maximizeY={!!sec.maximizeY || sec.maximize === 'y'}
+                                  exportRef={(el: SVGSVGElement | null) => { paretoSvgRefs.current[idx] = el }}
+                                />
+                              </div>
+                            </div>
                           </div>
-                        )}
-                      </div>
-                      <div>
-                        <div className="form-label" style={{ marginBottom: 4 }}>Display</div>
-                        <Space>
-                          <span className="form-inline-label">Frontier</span>
-                          <Switch checked={paretoShowFrontier} onChange={setParetoShowFrontier} />
-                          <span className="form-inline-label">Diagonal</span>
-                          <Switch checked={paretoShowDiagonal} onChange={setParetoShowDiagonal} />
-                          <span className="form-inline-label">Maximize</span>
-                          <Segmented
-                            size="small"
-                            options={[
-                              { label: (<span><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 999, background: '#2ca02c', marginRight: 6 }} />Y</span>), value: 'y' },
-                              { label: (<span><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 999, background: '#8a8a8a', marginRight: 6 }} />None</span>), value: 'none' },
-                              { label: (<span><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 999, background: '#d67c00', marginRight: 6 }} />X</span>), value: 'x' },
-                            ]}
-                            value={paretoMaximizeMode}
-                            onChange={(v) => setParetoMaximizeMode(v as 'y' | 'none' | 'x')}
-                            className={`tri tri-${paretoMaximizeMode}`}
-                          />
-                          <Tag
-                            color={paretoMaximizeMode === 'y' ? '#2ca02c' : (paretoMaximizeMode === 'x' ? '#d67c00' : '#8a8a8a')}
-                            style={{ marginLeft: 8, color: '#fff', border: 'none' }}
-                          >
-                            {paretoMaximizeMode === 'y' ? 'Active: Y' : paretoMaximizeMode === 'x' ? 'Active: X' : 'Active: None'}
-                          </Tag>
-                        </Space>
-                      </div>
-                      <div style={{ marginLeft: 'auto' }}>
-                        <Dropdown
-                          menu={{
-                            items: [
-                              { key: 'png-light', label: 'PNG (Light bg)' },
-                              { key: 'png-dark', label: 'PNG (Dark bg)' },
-                              { key: 'svg', label: 'SVG' },
-                            ],
-                            onClick: ({ key }) => {
-                              const sec = {
-                                baseline: paretoBaseline,
-                                variant: paretoVariant,
-                                categories: paretoCategories,
-                                metricBases: paretoMetricBasesSel.length ? paretoMetricBasesSel : (paretoMetricBase ? [paretoMetricBase] : []),
-                                ks: paretoKsSel.length ? paretoKsSel : (paretoK != null ? [paretoK] : []),
-                                metricKByBase: paretoMetricKByBase,
-                                showFrontier: paretoShowFrontier,
-                                showDiagonal: paretoShowDiagonal,
-                                maximize: paretoMaximizeMode,
-                                maximizeX: paretoMaximizeMode === 'x',
-                                maximizeY: paretoMaximizeMode === 'y',
-                              } as SavedPareto
-                              if (key === 'png-light') downloadParetoPngAt(0, sec, false)
-                              else if (key === 'png-dark') downloadParetoPngAt(0, sec, true)
-                              else if (key === 'svg') downloadParetoSvgAt(0, sec)
-                            },
-                          }}
-                        >
-                          <Button size="middle" icon={<DownloadOutlined />}>Download</Button>
-                        </Dropdown>
-                      </div>
-                    </Space>
-                    <div className={`pareto-content ${isDark ? 'dark' : 'light'}`}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        <div style={{ color: isDark ? '#aaa' : '#666', maxWidth: 900, fontSize: 12, alignSelf: 'center', textAlign: 'center' }}>
-                          Compare categories by plotting baseline (X) vs variant (Y) for the selected metric and k. Points above the diagonal favor the variant.
-                        </div>
-                        <div style={{ alignSelf: 'center' }}>
-                          <ParetoChart
-                            points={paretoPoints}
-                            width={900}
-                            height={520}
-                            isDark={isDark}
-                            xLabel={
-                              (paretoMetricBasesSel.length === 1 && paretoKsSel.length === 1)
-                                ? `${paretoMetricBasesSel[0]}@${paretoKsSel[0]} (baseline)`
-                                : (paretoMetricBasesSel.length === 0 && paretoKsSel.length === 0 && paretoMetricBase && paretoK != null)
-                                  ? `${paretoMetricBase}@${paretoK} (baseline)`
-                                  : 'baseline'
-                            }
-                            yLabel={
-                              (paretoMetricBasesSel.length === 1 && paretoKsSel.length === 1)
-                                ? `${paretoMetricBasesSel[0]}@${paretoKsSel[0]} (variant)`
-                                : (paretoMetricBasesSel.length === 0 && paretoKsSel.length === 0 && paretoMetricBase && paretoK != null)
-                                  ? `${paretoMetricBase}@${paretoK} (variant)`
-                                  : 'variant'
-                            }
-                            showFrontier={paretoShowFrontier}
-                            showDiagonal={paretoShowDiagonal}
-                            maximizeX={paretoMaximizeMode === 'x'}
-                            maximizeY={paretoMaximizeMode === 'y'}
-                            exportRef={(el: SVGSVGElement | null) => { paretoSvgRefs.current[0] = el }}
-                          />
-                        </div>
-                      </div>
+                        )
+                      })}
                     </div>
                   </Space>
                 </div>
@@ -2201,6 +2400,7 @@ function App() {
               <li>Chosen data keys (tables)</li>
               <li>Applied per-table filter and rows</li>
               <li>Diagram sections (data key + metric)</li>
+              <li>Pareto sections (metrics, k selections, display options)</li>
             </ul>
           </div>
         </Space>
