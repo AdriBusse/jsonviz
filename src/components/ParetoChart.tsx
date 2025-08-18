@@ -228,35 +228,169 @@ export default function ParetoChart({
       .attr('y', (d) => y(d.y) - 6)
       .attr('fill', isDark ? '#ddd' : '#333')
       .style('font-size', '11px')
+      .style('cursor', 'pointer')
       .text((d) => d.category)
+      .on('mouseover', function (_e: any, d) {
+        d3.select(this as any).style('font-weight', '600')
+        tooltip
+          .style('display', 'block')
+          .html(`<strong>${d.category}</strong><br/>x=${d.x.toFixed(5)}<br/>y=${d.y.toFixed(5)}<br/>Δ=${(d.y - d.x).toFixed(5)}`)
+      })
+      .on('mousemove', (event: MouseEvent) => {
+        tooltip.style('left', event.clientX + 12 + 'px').style('top', event.clientY + 12 + 'px')
+      })
+      .on('mouseout', function () {
+        d3.select(this as any).style('font-weight', null)
+        tooltip.style('display', 'none')
+      })
 
     if (showFrontier) {
-      // If both toggles are false (tri-state 'none'), default to maximizing both for frontier
-      const mX = maximizeX || (!maximizeX && !maximizeY)
-      const mY = maximizeY || (!maximizeX && !maximizeY)
-      const isDominated = (a: ParetoPoint) =>
-        points.some((b) => {
-          if (a === b) return false
-          const betterX = mX ? b.x >= a.x : b.x <= a.x
-          const betterY = mY ? b.y >= a.y : b.y <= a.y
-          const strictlyBetter = mX ? b.x > a.x : b.x < a.x
-          const strictlyBetterY = mY ? b.y > a.y : b.y < a.y
-          return betterX && betterY && (strictlyBetter || strictlyBetterY)
-        })
-      const frontier = points.filter((p) => !isDominated(p))
-      const sorted = frontier.sort((a, b) => a.x - b.x)
+      // Frontier depends on maximize mode
+      const both = (!maximizeX && !maximizeY) || (maximizeX && maximizeY)
+      const eps = 1e-9
+      let frontier: ParetoPoint[]
+      let modeLabel = 'X & Y'
+      if (both) {
+        const mX = true
+        const mY = true
+        const isDominated = (a: ParetoPoint) =>
+          points.some((b) => {
+            if (a === b) return false
+            const betterX = mX ? b.x >= a.x : b.x <= a.x
+            const betterY = mY ? b.y >= a.y : b.y <= a.y
+            const strictlyBetterX = mX ? b.x > a.x : b.x < a.x
+            const strictlyBetterY = mY ? b.y > a.y : b.y < a.y
+            return betterX && betterY && (strictlyBetterX || strictlyBetterY)
+          })
+        frontier = points.filter((p) => !isDominated(p))
+        modeLabel = 'X & Y'
+      } else if (maximizeX) {
+        const maxX = d3.max(points, (d) => d.x) ?? 0
+        frontier = points.filter((p) => p.x >= maxX - eps)
+        modeLabel = 'X'
+      } else {
+        const maxY = d3.max(points, (d) => d.y) ?? 0
+        frontier = points.filter((p) => p.y >= maxY - eps)
+        modeLabel = 'Y'
+      }
+
+      // Sort for a clean polyline
+      const sorted = both
+        ? frontier.sort((a, b) => a.x - b.x)
+        : maximizeX
+        ? frontier.sort((a, b) => a.y - b.y)
+        : frontier.sort((a, b) => a.x - b.x)
+
       const line = d3
         .line<ParetoPoint>()
         .x((d) => x(d.x))
         .y((d) => y(d.y))
+
+      const strokeColor = both ? (isDark ? '#6fa8ff' : '#165dff') : maximizeX ? '#d67c00' : '#2ca02c'
+
       g
         .append('path')
         .datum(sorted)
+        .attr('class', 'pareto-frontier')
         .attr('fill', 'none')
-        .attr('stroke', isDark ? '#6fa8ff' : '#165dff')
+        .attr('stroke', strokeColor)
         .attr('stroke-width', 2)
         .attr('d', line as any)
         .style('pointer-events', 'none')
+
+      // Hit area for tooltip
+      const frontierHit = g
+        .append('path')
+        .datum(sorted)
+        .attr('fill', 'none')
+        .attr('stroke', 'transparent')
+        .attr('stroke-width', 12)
+        .attr('d', line as any)
+        .style('pointer-events', 'stroke')
+      ;(frontierHit as any).raise()
+
+      const fmtList = (arr: ParetoPoint[]) => {
+        const names = arr.map((p) => p.category)
+        const maxShow = 12
+        if (names.length <= maxShow) return names.join(', ')
+        return names.slice(0, maxShow).join(', ') + `, +${names.length - maxShow} more`
+      }
+      frontierHit
+        .on('mouseover', function () {
+          const extra = maximizeX
+            ? `<div>max X = <strong>${(d3.max(points, (d) => d.x) ?? 0).toFixed(5)}</strong></div>`
+            : both
+            ? ''
+            : `<div>max Y = <strong>${(d3.max(points, (d) => d.y) ?? 0).toFixed(5)}</strong></div>`
+          const html = `
+            <div><strong>Frontier (maximize ${modeLabel})</strong></div>
+            ${extra}
+            <div>Points: <strong>${frontier.length}</strong>${frontier.length ? '<br/>' + fmtList(frontier) : ''}</div>
+          `
+          tooltip.html(html).style('display', 'block')
+        })
+        .on('mousemove', (event: MouseEvent) => {
+          tooltip.style('left', event.clientX + 12 + 'px').style('top', event.clientY + 12 + 'px')
+        })
+        .on('mouseout', function () {
+          tooltip.style('display', 'none')
+        })
+    }
+
+    // Maximize-side polyline: connect all points where selected axis has higher or equal value
+    if ((maximizeX && !maximizeY) || (maximizeY && !maximizeX)) {
+      const eps = 0
+      const side = maximizeX ? 'X' : 'Y'
+      const subset = maximizeX
+        ? points.filter((p) => p.x >= p.y - eps)
+        : points.filter((p) => p.y >= p.x - eps)
+      if (subset.length >= 2) {
+        const sorted = maximizeX
+          ? subset.slice().sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x))
+          : subset.slice().sort((a, b) => (a.y === b.y ? a.x - b.x : a.y - b.y))
+        const line = d3
+          .line<ParetoPoint>()
+          .x((d) => x(d.x))
+          .y((d) => y(d.y))
+        const stroke = maximizeX ? '#d67c00' : '#2ca02c'
+        g
+          .append('path')
+          .datum(sorted)
+          .attr('class', 'maximize-side-line')
+          .attr('fill', 'none')
+          .attr('stroke', stroke)
+          .attr('stroke-width', 2)
+          .attr('d', line as any)
+          .style('pointer-events', 'none')
+        const hit = g
+          .append('path')
+          .datum(sorted)
+          .attr('fill', 'none')
+          .attr('stroke', 'transparent')
+          .attr('stroke-width', 12)
+          .attr('d', line as any)
+          .style('pointer-events', 'stroke')
+        ;(hit as any).raise()
+        const names = subset.map((p) => p.category)
+        const maxShow = 12
+        const list = names.length <= maxShow ? names.join(', ') : names.slice(0, maxShow).join(', ') + `, +${names.length - maxShow} more`
+        hit
+          .on('mouseover', function () {
+            const html = `
+              <div><strong>Maximize ${side} line</strong></div>
+              <div>Points on line: <strong>${subset.length}</strong></div>
+              ${subset.length ? `<div>${list}</div>` : ''}
+              <div style="margin-top:4px;color:${isDark ? '#bbb' : '#666'}">Note: ties (x=y) count for both sides.</div>
+            `
+            tooltip.html(html).style('display', 'block')
+          })
+          .on('mousemove', (event: MouseEvent) => {
+            tooltip.style('left', event.clientX + 12 + 'px').style('top', event.clientY + 12 + 'px')
+          })
+          .on('mouseout', function () {
+            tooltip.style('display', 'none')
+          })
+      }
     }
 
     return () => {
