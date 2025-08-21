@@ -9,7 +9,7 @@ import LineChart from './components/LineChart'
 import ParetoChart from './components/ParetoChart'
 import RadarChart from './components/RadarChart'
 import { buildMetricMap, getMetricDescription, parseMetricName } from './utils/metrics'
-import type { Manifest, LoadedFile, SavedFilter, SavedSuite, DiagramSpec, Series, SavedPareto } from './types'
+import type { Manifest, LoadedFile, SavedFilter, SavedSuite, DiagramSpec, Series, SavedPareto, SavedRadar } from './types'
 
 function App() {
   const [manifest, setManifest] = useState<Manifest | null>(null)
@@ -24,7 +24,7 @@ function App() {
   const selectionRef = useRef<HTMLDivElement | null>(null)
   const diagramSvgRefs = useRef<Record<number, SVGSVGElement | null>>({})
   const paretoSvgRefs = useRef<Record<number, SVGSVGElement | null>>({})
-  const radarSvgRef = useRef<SVGSVGElement | null>(null)
+  const radarSvgRefs = useRef<Record<number, SVGSVGElement | null>>({})
   // Diagram preview modal state
   const [previewDiagram, setPreviewDiagram] = useState<{ key: string; metricBase: string } | null>(null)
   // Saved reusable filters (initialize from localStorage to avoid first-render overwrite)
@@ -461,12 +461,23 @@ function App() {
         maximizeX: !!s.maximizeX,
         maximizeY: !!s.maximizeY,
       })),
-      // Radar
-      radar: {
-        categories: Array.isArray(radarCategories) ? radarCategories : [],
-        metricBase: radarMetricBase ?? null,
-        k: radarK ?? null,
-      },
+      // Radar (back-compat single); prefer first populated section if available
+      radar: (() => {
+        const first = (radarSections || []).find((s) => s.metricBase && s.k != null)
+        return {
+          categories: Array.isArray(radarCategories) ? radarCategories : [],
+          metricBase: (first?.metricBase ?? radarMetricBase) ?? null,
+          k: (first?.k ?? radarK) ?? null,
+        }
+      })(),
+      // New: all radar sections (persist configured and partially-configured; drop pure placeholders)
+      radarSections: (radarSections || [])
+        .filter((s) => s && (s.metricBase != null || s.k != null))
+        .map((s) => ({
+          categories: Array.isArray(radarCategories) ? radarCategories : [],
+          metricBase: s.metricBase ?? null,
+          k: s.k ?? null,
+        })),
     }
   }
 
@@ -553,6 +564,35 @@ function App() {
           maximizeY: false,
         },
       ])
+    }
+    // Apply Radar (multi first; fallback to legacy single; else placeholder)
+    if (suite.radarSections && Array.isArray(suite.radarSections) && suite.radarSections.length > 0) {
+      const normalizedRadar = suite.radarSections.map((s) => ({
+        categories: Array.isArray(s.categories) ? s.categories : [],
+        metricBase: s.metricBase ?? null,
+        k: s.k ?? null,
+      }))
+      setRadarSections(normalizedRadar)
+      // Prefer global radar categories if provided; otherwise first non-empty section, else []
+      let cats = Array.isArray(suite.radar?.categories) ? suite.radar!.categories : []
+      if (!cats || cats.length === 0) {
+        const firstNonEmpty = normalizedRadar.find((s) => Array.isArray(s.categories) && s.categories.length > 0)
+        cats = firstNonEmpty ? (firstNonEmpty.categories as string[]) : []
+      }
+      setRadarCategories(cats)
+      const firstR = normalizedRadar[0]
+      setRadarMetricBase((suite.radar?.metricBase ?? firstR.metricBase) ?? null)
+      setRadarK((suite.radar?.k ?? firstR.k) ?? null)
+    } else if (suite.radar) {
+      const cats = Array.isArray(suite.radar.categories) ? suite.radar.categories : []
+      const base = suite.radar.metricBase ?? null
+      const kk = suite.radar.k ?? null
+      setRadarCategories(cats)
+      setRadarMetricBase(base)
+      setRadarK(kk)
+      setRadarSections([{ categories: cats, metricBase: base, k: kk }])
+    } else {
+      setRadarSections([{ categories: [], metricBase: null, k: null }])
     }
     message.success(`Loaded "${suite.name}"`)
   }
@@ -645,6 +685,8 @@ function App() {
         : [...compact, { key: null, metricBase: null }]
     })
   }, [commonDataKeys])
+
+  
 
   // Apply pending suite keys once commonDataKeys are ready (placed after declaration)
   useEffect(() => {
@@ -822,10 +864,15 @@ function App() {
     }
   }, [selectedValidFiles, commonDataKeys])
 
-  // ----- Radar (categories across files at base@k) -----
+  // ----- Radar (multiple sections; categories across files at base@k) -----
+  // Back-compat single-state (used only for older suites and fallback save)
   const [radarCategories, setRadarCategories] = useState<string[]>([])
   const [radarMetricBase, setRadarMetricBase] = useState<string | null>(null)
   const [radarK, setRadarK] = useState<number | null>(null)
+  // New multi Radar sections
+  const [radarSections, setRadarSections] = useState<SavedRadar[]>([
+    { categories: [], metricBase: null, k: null },
+  ])
 
   // Default categories similar to Pareto on first load/selection
   useEffect(() => {
@@ -841,78 +888,115 @@ function App() {
       .filter((f): f is LoadedFile => !!f && f.valid)
   }, [selected, filesCache])
 
-  // Available metric bases for current radar categories across all selected files (intersection)
-  const radarMetricBases = useMemo(() => {
+  // Helpers for per-section availability
+  function getRadarMetricBasesFor(categories: string[]) {
     const bases = new Set<string>()
-    if (selectedRadarFiles.length === 0 || radarCategories.length === 0) return [] as string[]
+    if (selectedRadarFiles.length === 0 || categories.length === 0) return [] as string[]
     const counts: Record<string, number> = {}
     for (const f of selectedRadarFiles) {
-      for (const cat of radarCategories) {
+      for (const cat of categories) {
         const map = buildMetricMap(cat, f.data?.[cat])
-        const set = new Set(Object.keys(map).map((m) => parseMetricName(m)).filter((x) => x.k != null).map((x) => x.base))
+        const set = new Set(
+          Object.keys(map)
+            .map((m) => parseMetricName(m))
+            .filter((x) => x.k != null)
+            .map((x) => x.base)
+        )
         for (const b of set) counts[b] = (counts[b] || 0) + 1
       }
     }
-    const need = selectedRadarFiles.length * radarCategories.length
+    const need = selectedRadarFiles.length * categories.length
     for (const [b, c] of Object.entries(counts)) if (c === need) bases.add(b)
     return Array.from(bases).sort()
-  }, [selectedRadarFiles, radarCategories])
+  }
 
-  // Available ks for chosen base across all selected files and categories (intersection)
-  const radarKs = useMemo(() => {
+  function getRadarKsFor(categories: string[], base: string | null) {
     const out = new Set<number>()
-    if (!radarMetricBase || selectedRadarFiles.length === 0 || radarCategories.length === 0) return [] as number[]
-    // Build intersection by counting presence per file-category
+    if (!base || selectedRadarFiles.length === 0 || categories.length === 0) return [] as number[]
     const counts: Record<number, number> = {}
     for (const f of selectedRadarFiles) {
-      for (const cat of radarCategories) {
+      for (const cat of categories) {
         const map = buildMetricMap(cat, f.data?.[cat])
         const ks = new Set(
           Object.keys(map)
             .map((m) => parseMetricName(m))
-            .filter((x) => x.base === radarMetricBase && x.k != null)
+            .filter((x) => x.base === base && x.k != null)
             .map((x) => x.k as number)
         )
         ks.forEach((k) => { counts[k] = (counts[k] || 0) + 1 })
       }
     }
-    const need = selectedRadarFiles.length * radarCategories.length
+    const need = selectedRadarFiles.length * categories.length
     for (const [k, c] of Object.entries(counts)) if (c === need) out.add(Number(k))
     return Array.from(out).sort((a, b) => a - b)
-  }, [radarMetricBase, selectedRadarFiles, radarCategories])
+  }
 
-  // Keep radar base/k defaults in sync with availability
+  // Keep first radar section defaults in sync with availability (placeholder convenience)
   useEffect(() => {
-    if (radarMetricBases.length > 0 && (!radarMetricBase || !radarMetricBases.includes(radarMetricBase))) {
-      setRadarMetricBase(radarMetricBases[0])
-    }
-    if (radarMetricBases.length === 0) {
-      setRadarMetricBase(null)
-      setRadarK(null)
-    }
-  }, [radarMetricBases])
+    setRadarSections((prev) => {
+      // Defer adjustments until files are loaded; avoid wiping loaded sections on initial load
+      if (selectedRadarFiles.length === 0) return prev
+      // Also wait until global categories are set; otherwise availability looks empty
+      if (!radarCategories || radarCategories.length === 0) return prev
+      if (prev.length === 0) return [{ categories: [], metricBase: null, k: null }]
+      const first = prev[0]
+      const cats = first.categories.length > 0 ? first.categories : (radarCategories.length > 0 ? radarCategories : first.categories)
+      const bases = getRadarMetricBasesFor(cats)
+      let base = first.metricBase
+      let k = first.k
+      if (bases.length > 0 && (!base || !bases.includes(base))) base = bases[0]
+      if (bases.length === 0) { base = null; k = null }
+      const ks = getRadarKsFor(cats, base)
+      if (ks.length > 0 && (k == null || !ks.includes(k))) k = ks[0]
+      if (base && ks.length === 0) k = null
+      const next = [...prev]
+      next[0] = { categories: cats, metricBase: base, k }
+      return next
+    })
+  }, [selectedRadarFiles, radarCategories])
 
+  // Keep all radar sections valid when global categories or files change; ensure one trailing placeholder
   useEffect(() => {
-    if (radarKs.length > 0 && (radarK == null || !radarKs.includes(radarK))) {
-      setRadarK(radarKs[0])
-    }
-    if (radarMetricBase && radarKs.length === 0) {
-      setRadarK(null)
-    }
-  }, [radarKs, radarMetricBase])
+    setRadarSections((prev) => {
+      // Defer adjustments until files are loaded; avoid wiping loaded sections on initial load
+      if (selectedRadarFiles.length === 0) return prev
+      // Also wait until global categories are set; otherwise availability looks empty
+      if (!radarCategories || radarCategories.length === 0) return prev
+      const adjusted = prev.map((s) => {
+        const bases = new Set(getRadarMetricBasesFor(radarCategories))
+        let metricBase = s.metricBase as string | null
+        let k = s.k as number | null
+        if (metricBase && !bases.has(metricBase)) {
+          metricBase = null
+          k = null
+        }
+        if (metricBase) {
+          const kset = new Set(getRadarKsFor(radarCategories, metricBase))
+          if (k != null && !kset.has(k)) {
+            k = null
+          }
+        }
+        return { ...s, metricBase, k }
+      })
+      const compact = adjusted.filter((s, i) => !(s.metricBase == null && s.k == null && i < adjusted.length - 1))
+      return compact.length && compact[compact.length - 1].metricBase == null && compact[compact.length - 1].k == null
+        ? compact
+        : [...compact, { categories: [], metricBase: null, k: null }]
+    })
+  }, [radarCategories, selectedRadarFiles])
 
-  // Build radar series per selected file
-  const radarSeries = useMemo(() => {
-    if (!radarMetricBase || radarK == null || radarCategories.length === 0) return [] as { name: string; values: number[]; color: string }[]
+  // Build radar series for a section
+  function buildRadarSeriesFor(categories: string[], base: string | null, k: number | null) {
+    if (!base || k == null || categories.length === 0) return [] as { name: string; values: number[]; color: string }[]
     const total = selectedRadarFiles.length
     return selectedRadarFiles.map((f, idx) => {
       const color = colorForIndex(idx, total)
-      const values = radarCategories.map((cat) => {
+      const values = categories.map((cat) => {
         const map = buildMetricMap(cat, f.data?.[cat])
         let val: number | null = null
         for (const [m, v] of Object.entries(map)) {
-          const { base, k } = parseMetricName(m)
-          if (base === radarMetricBase && k === radarK) {
+          const { base: b, k: kk } = parseMetricName(m)
+          if (b === base && kk === k) {
             const num = typeof v === 'number' ? v : Number(v)
             if (Number.isFinite(num)) { val = num; break }
           }
@@ -921,11 +1005,11 @@ function App() {
       })
       return { name: f.name || f.path, values, color }
     })
-  }, [selectedRadarFiles, radarCategories, radarMetricBase, radarK, isDark])
+  }
 
-  // Export Radar SVG
-  function downloadRadarSvg(useDarkBg: boolean) {
-    const src = radarSvgRef.current
+  // Export Radar SVG per section
+  function downloadRadarSvgAt(idx: number, sec: SavedRadar, useDarkBg: boolean) {
+    const src = radarSvgRefs.current[idx]
     if (!src) { message.error('Radar chart not ready to export'); return }
     const NS = 'http://www.w3.org/2000/svg'
     const margin = 16
@@ -952,8 +1036,8 @@ function App() {
     title.setAttribute('font-size', String(titleFontSize))
     title.setAttribute('font-family', 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif')
     title.setAttribute('fill', useDarkBg ? '#ddd' : '#333')
-    const catsTxt = radarCategories.join(', ')
-    const titleText = radarMetricBase && radarK != null ? `Radar: ${radarMetricBase}@${radarK} — ${catsTxt}` : 'Radar'
+    const catsTxt = (sec.categories || []).join(', ')
+    const titleText = sec.metricBase && sec.k != null ? `Radar: ${sec.metricBase}@${sec.k} — ${catsTxt}` : 'Radar'
     title.textContent = titleText
     outSvg.appendChild(title)
     const chartGroup = document.createElementNS(NS, 'g')
@@ -969,7 +1053,7 @@ function App() {
     const blob = new Blob([xml], { type: 'image/svg+xml;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const compName = (activeSuiteId && savedSuites.find((x) => x.id === activeSuiteId)?.name) || 'comparison'
-    const baseK = radarMetricBase && radarK != null ? `${radarMetricBase}@${radarK}` : 'metric'
+    const baseK = sec.metricBase && sec.k != null ? `${sec.metricBase}@${sec.k}` : 'metric'
     const file = sanitizeFilename(`${compName}_radar_${baseK}.svg`)
     const a = document.createElement('a')
     a.href = url
@@ -980,9 +1064,9 @@ function App() {
     URL.revokeObjectURL(url)
   }
 
-  // Export Radar PNG
-  function downloadRadarPng(useDarkBg: boolean) {
-    const src = radarSvgRef.current
+  // Export Radar PNG per section
+  function downloadRadarPngAt(idx: number, sec: SavedRadar, useDarkBg: boolean) {
+    const src = radarSvgRefs.current[idx]
     if (!src) { message.error('Radar chart not ready to export'); return }
     const NS = 'http://www.w3.org/2000/svg'
     const margin = 16
@@ -1009,8 +1093,8 @@ function App() {
     title.setAttribute('font-size', String(titleFontSize))
     title.setAttribute('font-family', 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif')
     title.setAttribute('fill', useDarkBg ? '#ddd' : '#333')
-    const catsTxt = radarCategories.join(', ')
-    const titleText = radarMetricBase && radarK != null ? `Radar: ${radarMetricBase}@${radarK} — ${catsTxt}` : 'Radar'
+    const catsTxt = (sec.categories || []).join(', ')
+    const titleText = sec.metricBase && sec.k != null ? `Radar: ${sec.metricBase}@${sec.k} — ${catsTxt}` : 'Radar'
     title.textContent = titleText
     outSvg.appendChild(title)
     const chartGroup = document.createElementNS(NS, 'g')
@@ -1038,10 +1122,10 @@ function App() {
       canvas.toBlob((blob) => {
         if (!blob) return
         const url2 = URL.createObjectURL(blob)
-        const a = document.createElement('a')
         const compName = (activeSuiteId && savedSuites.find((x) => x.id === activeSuiteId)?.name) || 'comparison'
-        const baseK = radarMetricBase && radarK != null ? `${radarMetricBase}@${radarK}` : 'metric'
+        const baseK = sec.metricBase && sec.k != null ? `${sec.metricBase}@${sec.k}` : 'metric'
         const file = sanitizeFilename(`${compName}_radar_${baseK}.png`)
+        const a = document.createElement('a')
         a.href = url2
         a.download = file
         document.body.appendChild(a)
@@ -1265,8 +1349,6 @@ function App() {
     }
     return pts
   }
-
-  
 
   // Metric parsing helpers for charting
   // parseMetricName imported from utils
@@ -1525,16 +1607,16 @@ function App() {
       ctx.drawImage(img, 0, 0)
       canvas.toBlob((blob) => {
         if (!blob) { URL.revokeObjectURL(svgUrl); message.error('Failed to export PNG'); return }
-        const url = URL.createObjectURL(blob)
+        const url2 = URL.createObjectURL(blob)
         const compName = (activeSuiteId && savedSuites.find((x) => x.id === activeSuiteId)?.name) || 'comparison'
         const file = sanitizeFilename(`${compName}_${spec.key}_${spec.metricBase}.png`)
         const a = document.createElement('a')
-        a.href = url
+        a.href = url2
         a.download = file
         document.body.appendChild(a)
         a.click()
         a.remove()
-        URL.revokeObjectURL(url)
+        URL.revokeObjectURL(url2)
         URL.revokeObjectURL(svgUrl)
       }, 'image/png')
     }
@@ -1782,8 +1864,6 @@ function App() {
         </Typography.Paragraph>
 
         <Divider style={{ margin: '8px 0 12px' }} />
-
-        
 
         {/* Save/Load Comparison Suites */}
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
@@ -2182,11 +2262,11 @@ function App() {
               key: 'radar',
               label: <span style={{ color: isDark ? '#fff' : '#000' }}>Radar</span>,
               children: (
-                <div style={{ color: isDark ? '#fff' : '#000' }}>
-                  <Divider orientation="left">Radar Chart</Divider>
-                  <Space wrap size={12} style={{ marginBottom: 8 }}>
+                <div className={`radar-pane ${isDark ? 'dark' : 'light'}`}>
+                  <Divider orientation="left">Radar Comparison</Divider>
+                  <Space direction="vertical" style={{ width: '100%' }} size={12}>
                     <div>
-                      <div className="form-label" style={{ marginBottom: 4 }}>Categories</div>
+                      <div className="form-label" style={{ marginBottom: 4 }}>Default categories</div>
                       <Select
                         mode="multiple"
                         style={{ minWidth: 360 }}
@@ -2197,79 +2277,121 @@ function App() {
                         getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
                       />
                     </div>
-                    <div>
-                      <div className="form-label" style={{ marginBottom: 4 }}>Metric base</div>
-                      <Select
-                        style={{ width: 200 }}
-                        placeholder="Metric"
-                        options={radarMetricBases.map((b: string) => {
-                          const desc = getMetricDescription(b)
-                          return {
-                            label: (
-                              <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-                                {b.toUpperCase()}
-                                {desc && (
-                                  <Tooltip title={desc}>
-                                    <InfoCircleOutlined style={{ marginLeft: 6, color: isDark ? '#bbb' : '#999' }} />
-                                  </Tooltip>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                      {radarSections.map((sec, idx) => {
+                        const catsForSec = radarCategories
+                        const bases = getRadarMetricBasesFor(catsForSec)
+                        const ks = getRadarKsFor(catsForSec, sec.metricBase)
+                        const series = buildRadarSeriesFor(catsForSec, sec.metricBase, sec.k)
+                        const isPlaceholder = (!sec.metricBase || sec.k == null)
+                        return (
+                          <div key={`radar-sec-${idx}`} style={{ border: '1px solid #e5e5e5', borderRadius: 8, padding: 12, color: isDark ? '#fff' : '#000' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                              <div style={{ fontWeight: 500 }}>Radar section {idx + 1}</div>
+                              <Space>
+                                {(!isPlaceholder || radarSections.length > 1) && (
+                                  <Popconfirm title="Remove this section?" onConfirm={() => {
+                                    setRadarSections((prev) => {
+                                      const next = prev.filter((_, i) => i !== idx)
+                                      return next.length > 0 ? next : [{ categories: [], metricBase: null, k: null }]
+                                    })
+                                  }}>
+                                    <Button size="small" danger>Remove</Button>
+                                  </Popconfirm>
                                 )}
-                              </span>
-                            ),
-                            value: b,
-                          }
-                        })}
-                        value={radarMetricBase ?? undefined}
-                        onChange={(v) => setRadarMetricBase(v)}
-                        getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
-                      />
+                                {sec.metricBase && sec.k != null && series.length > 0 && (
+                                  <Dropdown
+                                    menu={{
+                                      items: [
+                                        { key: 'png-light', label: 'PNG (Light bg)' },
+                                        { key: 'png-dark', label: 'PNG (Dark bg)' },
+                                        { key: 'svg', label: 'SVG' },
+                                      ],
+                                      onClick: ({ key }) => {
+                                        const enriched = {
+                                          categories: catsForSec,
+                                          metricBase: sec.metricBase,
+                                          k: sec.k,
+                                        }
+                                        if (key === 'png-light') downloadRadarPngAt(idx, enriched, false)
+                                        else if (key === 'png-dark') downloadRadarPngAt(idx, enriched, true)
+                                        else if (key === 'svg') downloadRadarSvgAt(idx, enriched, isDark)
+                                      },
+                                    }}
+                                  >
+                                    <Button size="small" icon={<DownloadOutlined />}>Download</Button>
+                                  </Dropdown>
+                                )}
+                              </Space>
+                            </div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', marginBottom: 8 }}>
+                              <Select
+                                style={{ width: 160 }}
+                                placeholder="Metric"
+                                value={sec.metricBase ?? undefined}
+                                onChange={(v) => {
+                                  setRadarSections((prev) => {
+                                    const next = [...prev]
+                                    next[idx] = { ...next[idx], metricBase: v as string, k: null }
+                                    if (idx === prev.length - 1) next.push({ categories: [], metricBase: null, k: null })
+                                    return next
+                                  })
+                                }}
+                                options={bases.map((b) => {
+                                  const desc = getMetricDescription(b)
+                                  return {
+                                    label: (
+                                      <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                                        {b.toUpperCase()}
+                                        {desc && (
+                                          <Tooltip title={desc}>
+                                            <InfoCircleOutlined style={{ marginLeft: 6, color: isDark ? '#bbb' : '#999' }} />
+                                          </Tooltip>
+                                        )}
+                                      </span>
+                                    ),
+                                    value: b,
+                                  }
+                                })}
+                                getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
+                              />
+                              <Select
+                                style={{ width: 120 }}
+                                placeholder="k"
+                                value={sec.k ?? undefined}
+                                onChange={(v) => {
+                                  setRadarSections((prev) => {
+                                    const next = [...prev]
+                                    next[idx] = { ...next[idx], k: Number(v) }
+                                    if (idx === prev.length - 1) next.push({ categories: [], metricBase: null, k: null })
+                                    return next
+                                  })
+                                }}
+                                options={ks.map((k) => ({ label: String(k), value: k }))}
+                                getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
+                                disabled={!sec.metricBase}
+                              />
+                            </div>
+                            {sec.metricBase && sec.k != null && series.length === 0 && (
+                              <div style={{ color: isDark ? '#aaa' : '#888' }}>No data for {sec.metricBase.toUpperCase()}@{sec.k} across selected categories.</div>
+                            )}
+                            {sec.metricBase && sec.k != null && series.length > 0 && (
+                              <div style={{ alignSelf: 'center' }}>
+                                <RadarChart
+                                  categories={catsForSec}
+                                  series={series}
+                                  width={900}
+                                  height={520}
+                                  isDark={isDark}
+                                  exportRef={(el: SVGSVGElement | null) => { radarSvgRefs.current[idx] = el }}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
                     </div>
-                    <div>
-                      <div className="form-label" style={{ marginBottom: 4 }}>k</div>
-                      <Select
-                        style={{ width: 140 }}
-                        placeholder="k"
-                        options={radarKs.map((k) => ({ label: String(k), value: k }))}
-                        value={radarK ?? undefined}
-                        onChange={(v) => setRadarK(v)}
-                        getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
-                        disabled={!radarMetricBase}
-                      />
-                    </div>
-                    {radarSeries.length > 0 && (
-                      <Dropdown
-                        menu={{
-                          items: [
-                            { key: 'png-light', label: 'PNG (Light bg)' },
-                            { key: 'png-dark', label: 'PNG (Dark bg)' },
-                            { key: 'svg', label: 'SVG' },
-                          ],
-                          onClick: ({ key }) => {
-                            if (key === 'png-light') downloadRadarPng(false)
-                            else if (key === 'png-dark') downloadRadarPng(true)
-                            else if (key === 'svg') downloadRadarSvg(isDark)
-                          },
-                        }}
-                      >
-                        <Button size="small" icon={<DownloadOutlined />}>Download</Button>
-                      </Dropdown>
-                    )}
                   </Space>
-                  <div style={{ marginTop: 8 }}>
-                    {selected.size === 0 && <div style={{ color: isDark ? '#aaa' : '#888' }}>Select one or more files above.</div>}
-                    {selected.size > 0 && (!radarMetricBase || radarK == null || radarCategories.length === 0) && (
-                      <div style={{ color: isDark ? '#aaa' : '#888' }}>Pick categories, metric base and k.</div>
-                    )}
-                    {radarSeries.length > 0 && (
-                      <RadarChart
-                        categories={radarCategories}
-                        series={radarSeries}
-                        width={860}
-                        height={520}
-                        isDark={isDark}
-                        exportRef={(el: SVGSVGElement | null) => { radarSvgRef.current = el }}
-                      />
-                    )}
-                  </div>
                 </div>
               ),
             },

@@ -57,6 +57,8 @@ export type SavedSuite = {
   pareto?: SavedPareto
   // New: multiple Pareto charts per suite
   paretoSections?: SavedPareto[]
+  // New: multiple Radar charts per suite
+  radarSections?: SavedRadar[]
   // New: radar chart configuration
   radar?: SavedRadar
 }
