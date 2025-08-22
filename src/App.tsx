@@ -1,14 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Select, Spin, Table, Typography, Divider, FloatButton, Modal, Input, Space, Tag, Button, Checkbox, Popconfirm, message, Tooltip, Tabs, Collapse, Dropdown, Switch, Segmented } from 'antd'
+import { Alert, Select, Spin, Table, Typography, Divider, FloatButton, Modal, Input, Space, Tag, Button, Checkbox, Popconfirm, message, Tooltip, Tabs, Collapse, Dropdown } from 'antd'
 import { UpOutlined, InfoCircleOutlined, RightOutlined, DownloadOutlined } from '@ant-design/icons'
 import './App.css'
 import './table-theme.css'
 import HeaderTitle from './components/HeaderTitle'
 import ChartInfo from './components/ChartInfo'
 import LineChart from './components/LineChart'
-import ParetoChart from './components/ParetoChart'
+ 
+import ParetoTab from './components/ParetoTab'
 import RadarChart from './components/RadarChart'
 import { buildMetricMap, getMetricDescription, parseMetricName } from './utils/metrics'
+import { buildChartSeries, buildRadarSeriesFor } from './utils/series'
+import { sanitizeFilename } from './utils/files'
+import { getRadarMetricBasesFor, getRadarKsFor } from './utils/radar'
+import { exportSvgWithTitle, exportPngWithTitle } from './utils/export'
 import type { Manifest, LoadedFile, SavedFilter, SavedSuite, DiagramSpec, Series, SavedPareto, SavedRadar } from './types'
 
 function App() {
@@ -43,11 +48,15 @@ function App() {
     return []
   })
 
+  // Wire Pareto chart SVG ref from child component
+  const setParetoSvgRef = (idx: number, el: SVGSVGElement | null) => {
+    paretoSvgRefs.current[idx] = el
+  }
+
   // Export Pareto chart (SVG) for a section
   function downloadParetoSvgAt(idx: number, sec: SavedPareto) {
     const src = paretoSvgRefs.current[idx]
     if (!src) { message.error('Pareto chart not ready to export'); return }
-    const NS = 'http://www.w3.org/2000/svg'
     const bName = sec.baseline ? (filesCache[sec.baseline]?.name || sec.baseline) : 'baseline'
     const vName = sec.variant ? (filesCache[sec.variant]?.name || sec.variant) : 'variant'
     const bases = (sec.metricBases && sec.metricBases.length) ? sec.metricBases.join(',') : (sec.metricBase ?? '')
@@ -58,60 +67,17 @@ function App() {
           .join(', ')
       : `${bases}${ksTxt}`
     const titleText = `Pareto: ${baseK} — X: ${bName} vs Y: ${vName}`
-    const margin = 16
-    const titleFontSize = 14
-    const titleHeight = titleFontSize + 8
     const chartW = 900
     const chartH = 520
-    const totalW = margin + chartW + margin
-    const totalH = margin + titleHeight + chartH + margin
-    const outSvg = document.createElementNS(NS, 'svg')
-    outSvg.setAttribute('xmlns', NS)
-    outSvg.setAttribute('width', String(totalW))
-    outSvg.setAttribute('height', String(totalH))
-    const bg = document.createElementNS(NS, 'rect')
-    bg.setAttribute('x', '0')
-    bg.setAttribute('y', '0')
-    bg.setAttribute('width', String(totalW))
-    bg.setAttribute('height', String(totalH))
-    bg.setAttribute('fill', isDark ? '#111' : '#ffffff')
-    outSvg.appendChild(bg)
-    const title = document.createElementNS(NS, 'text')
-    title.setAttribute('x', String(margin))
-    title.setAttribute('y', String(margin + titleFontSize))
-    title.setAttribute('font-size', String(titleFontSize))
-    title.setAttribute('font-family', 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif')
-    title.setAttribute('fill', isDark ? '#ddd' : '#333')
-    title.textContent = titleText
-    outSvg.appendChild(title)
-    const chartGroup = document.createElementNS(NS, 'g')
-    chartGroup.setAttribute('transform', `translate(${margin}, ${margin + titleHeight})`)
-    const cloned = src.cloneNode(true) as SVGSVGElement
-    cloned.removeAttribute('width')
-    cloned.removeAttribute('height')
-    const wrap = document.createElementNS(NS, 'g')
-    while (cloned.firstChild) wrap.appendChild(cloned.firstChild)
-    chartGroup.appendChild(wrap)
-    outSvg.appendChild(chartGroup)
-    const xml = new XMLSerializer().serializeToString(outSvg)
-    const blob = new Blob([xml], { type: 'image/svg+xml;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
     const compName = (activeSuiteId && savedSuites.find((x) => x.id === activeSuiteId)?.name) || 'comparison'
     const file = sanitizeFilename(`${compName}_pareto_${(baseK || 'metric').replace(/[^a-z0-9_@,-]+/gi, '-')}.svg`)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = file
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(url)
+    exportSvgWithTitle(src, chartW, chartH, titleText, file, isDark)
   }
 
   // Export Pareto chart (PNG) for a section
   function downloadParetoPngAt(idx: number, sec: SavedPareto, useDarkBg: boolean) {
     const src = paretoSvgRefs.current[idx]
     if (!src) { message.error('Pareto chart not ready to export'); return }
-    const NS = 'http://www.w3.org/2000/svg'
     const bName = sec.baseline ? (filesCache[sec.baseline]?.name || sec.baseline) : 'baseline'
     const vName = sec.variant ? (filesCache[sec.variant]?.name || sec.variant) : 'variant'
     const bases = (sec.metricBases && sec.metricBases.length) ? sec.metricBases.join(',') : (sec.metricBase ?? '')
@@ -122,77 +88,18 @@ function App() {
           .join(', ')
       : `${bases}${ksTxt}`
     const titleText = `Pareto: ${baseK} — X: ${bName} vs Y: ${vName}`
-    const margin = 16
-    const titleFontSize = 14
-    const titleHeight = titleFontSize + 8
     const chartW = 900
     const chartH = 520
-    const totalW = margin + chartW + margin
-    const totalH = margin + titleHeight + chartH + margin
-    const outSvg = document.createElementNS(NS, 'svg')
-    outSvg.setAttribute('xmlns', NS)
-    outSvg.setAttribute('width', String(totalW))
-    outSvg.setAttribute('height', String(totalH))
-    const bg = document.createElementNS(NS, 'rect')
-    bg.setAttribute('x', '0')
-    bg.setAttribute('y', '0')
-    bg.setAttribute('width', String(totalW))
-    bg.setAttribute('height', String(totalH))
-    bg.setAttribute('fill', useDarkBg ? '#111' : '#ffffff')
-    outSvg.appendChild(bg)
-    const title = document.createElementNS(NS, 'text')
-    title.setAttribute('x', String(margin))
-    title.setAttribute('y', String(margin + titleFontSize))
-    title.setAttribute('font-size', String(titleFontSize))
-    title.setAttribute('font-family', 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif')
-    title.setAttribute('fill', useDarkBg ? '#ddd' : '#333')
-    title.textContent = titleText
-    outSvg.appendChild(title)
-    const chartGroup = document.createElementNS(NS, 'g')
-    chartGroup.setAttribute('transform', `translate(${margin}, ${margin + titleHeight})`)
-    const cloned = src.cloneNode(true) as SVGSVGElement
-    cloned.removeAttribute('width')
-    cloned.removeAttribute('height')
-    const wrap = document.createElementNS(NS, 'g')
-    while (cloned.firstChild) wrap.appendChild(cloned.firstChild)
-    // Adjust axis colors for background contrast
-    const axisText = wrap.querySelectorAll<SVGTextElement>('.tick text')
-    axisText.forEach((t) => t.setAttribute('fill', useDarkBg ? '#ddd' : '#333'))
-    const domainLines = wrap.querySelectorAll<SVGPathElement>('.domain')
-    domainLines.forEach((d) => { d.setAttribute('stroke', useDarkBg ? '#ddd' : '#333'); (d as any).style.opacity = '0.4' })
-    const tickLines = wrap.querySelectorAll<SVGLineElement>('.tick line')
-    tickLines.forEach((l) => { l.setAttribute('stroke', useDarkBg ? '#ddd' : '#333'); (l as any).style.opacity = '0.2' })
-    chartGroup.appendChild(wrap)
-    outSvg.appendChild(chartGroup)
-    const xml = new XMLSerializer().serializeToString(outSvg)
-    const svgUrl = URL.createObjectURL(new Blob([xml], { type: 'image/svg+xml;charset=utf-8' }))
-    const img = new Image()
-    img.onload = () => {
-      const canvas = document.createElement('canvas')
-      canvas.width = totalW
-      canvas.height = totalH
-      const ctx = canvas.getContext('2d')
-      if (!ctx) { URL.revokeObjectURL(svgUrl); message.error('Canvas not supported'); return }
-      ctx.fillStyle = useDarkBg ? '#111' : '#ffffff'
-      ctx.fillRect(0, 0, totalW, totalH)
-      ctx.drawImage(img, 0, 0)
-      canvas.toBlob((blob) => {
-        if (!blob) { URL.revokeObjectURL(svgUrl); message.error('Failed to export PNG'); return }
-        const url = URL.createObjectURL(blob)
-        const compName = (activeSuiteId && savedSuites.find((x) => x.id === activeSuiteId)?.name) || 'comparison'
-        const file = sanitizeFilename(`${compName}_pareto_${(baseK || 'metric').replace(/[^a-z0-9_@,-]+/gi, '-')}.png`)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = file
-        document.body.appendChild(a)
-        a.click()
-        a.remove()
-        URL.revokeObjectURL(url)
-        URL.revokeObjectURL(svgUrl)
-      }, 'image/png')
-    }
-    img.onerror = () => { URL.revokeObjectURL(svgUrl); message.error('Failed to render PNG') }
-    img.src = svgUrl
+    const compName = (activeSuiteId && savedSuites.find((x) => x.id === activeSuiteId)?.name) || 'comparison'
+    const file = sanitizeFilename(`${compName}_pareto_${(baseK || 'metric').replace(/[^a-z0-9_@,-]+/gi, '-')}.png`)
+    exportPngWithTitle(src, chartW, chartH, titleText, file, useDarkBg, (wrap) => {
+      const axisText = wrap.querySelectorAll<SVGTextElement>('.tick text')
+      axisText.forEach((t) => t.setAttribute('fill', useDarkBg ? '#ddd' : '#333'))
+      const domainLines = wrap.querySelectorAll<SVGPathElement>('.domain')
+      domainLines.forEach((d) => { d.setAttribute('stroke', useDarkBg ? '#ddd' : '#333'); (d as any).style.opacity = '0.4' })
+      const tickLines = wrap.querySelectorAll<SVGLineElement>('.tick line')
+      tickLines.forEach((l) => { l.setAttribute('stroke', useDarkBg ? '#ddd' : '#333'); (l as any).style.opacity = '0.2' })
+    })
   }
   // Comparison suites (saved app state)
   const [savedSuites, setSavedSuites] = useState<SavedSuite[]>(() => {
@@ -812,7 +719,7 @@ function App() {
   const [previewHighlight, setPreviewHighlight] = useState<string | null>(null)
   const previewSeries = useMemo(() => {
     if (!previewDiagram || !previewDiagram.key || !previewDiagram.metricBase) return [] as Series[]
-    return buildChartSeries(previewDiagram.key, previewDiagram.metricBase)
+    return buildChartSeries(selected, filesCache, previewDiagram.key, previewDiagram.metricBase, isDark)
   }, [previewDiagram, selected, filesCache])
 
   // ----- Pareto Frontier (separate area) -----
@@ -888,48 +795,7 @@ function App() {
       .filter((f): f is LoadedFile => !!f && f.valid)
   }, [selected, filesCache])
 
-  // Helpers for per-section availability
-  function getRadarMetricBasesFor(categories: string[]) {
-    const bases = new Set<string>()
-    if (selectedRadarFiles.length === 0 || categories.length === 0) return [] as string[]
-    const counts: Record<string, number> = {}
-    for (const f of selectedRadarFiles) {
-      for (const cat of categories) {
-        const map = buildMetricMap(cat, f.data?.[cat])
-        const set = new Set(
-          Object.keys(map)
-            .map((m) => parseMetricName(m))
-            .filter((x) => x.k != null)
-            .map((x) => x.base)
-        )
-        for (const b of set) counts[b] = (counts[b] || 0) + 1
-      }
-    }
-    const need = selectedRadarFiles.length * categories.length
-    for (const [b, c] of Object.entries(counts)) if (c === need) bases.add(b)
-    return Array.from(bases).sort()
-  }
-
-  function getRadarKsFor(categories: string[], base: string | null) {
-    const out = new Set<number>()
-    if (!base || selectedRadarFiles.length === 0 || categories.length === 0) return [] as number[]
-    const counts: Record<number, number> = {}
-    for (const f of selectedRadarFiles) {
-      for (const cat of categories) {
-        const map = buildMetricMap(cat, f.data?.[cat])
-        const ks = new Set(
-          Object.keys(map)
-            .map((m) => parseMetricName(m))
-            .filter((x) => x.base === base && x.k != null)
-            .map((x) => x.k as number)
-        )
-        ks.forEach((k) => { counts[k] = (counts[k] || 0) + 1 })
-      }
-    }
-    const need = selectedRadarFiles.length * categories.length
-    for (const [k, c] of Object.entries(counts)) if (c === need) out.add(Number(k))
-    return Array.from(out).sort((a, b) => a - b)
-  }
+  // Radar availability helpers moved to utils/radar
 
   // Keep first radar section defaults in sync with availability (placeholder convenience)
   useEffect(() => {
@@ -941,12 +807,12 @@ function App() {
       if (prev.length === 0) return [{ categories: [], metricBase: null, k: null }]
       const first = prev[0]
       const cats = first.categories.length > 0 ? first.categories : (radarCategories.length > 0 ? radarCategories : first.categories)
-      const bases = getRadarMetricBasesFor(cats)
+      const bases = getRadarMetricBasesFor(selectedRadarFiles, cats)
       let base = first.metricBase
       let k = first.k
       if (bases.length > 0 && (!base || !bases.includes(base))) base = bases[0]
       if (bases.length === 0) { base = null; k = null }
-      const ks = getRadarKsFor(cats, base)
+      const ks = getRadarKsFor(selectedRadarFiles, cats, base)
       if (ks.length > 0 && (k == null || !ks.includes(k))) k = ks[0]
       if (base && ks.length === 0) k = null
       const next = [...prev]
@@ -963,7 +829,7 @@ function App() {
       // Also wait until global categories are set; otherwise availability looks empty
       if (!radarCategories || radarCategories.length === 0) return prev
       const adjusted = prev.map((s) => {
-        const bases = new Set(getRadarMetricBasesFor(radarCategories))
+        const bases = new Set(getRadarMetricBasesFor(selectedRadarFiles, radarCategories))
         let metricBase = s.metricBase as string | null
         let k = s.k as number | null
         if (metricBase && !bases.has(metricBase)) {
@@ -971,7 +837,7 @@ function App() {
           k = null
         }
         if (metricBase) {
-          const kset = new Set(getRadarKsFor(radarCategories, metricBase))
+          const kset = new Set(getRadarKsFor(selectedRadarFiles, radarCategories, metricBase))
           if (k != null && !kset.has(k)) {
             k = null
           }
@@ -985,156 +851,34 @@ function App() {
     })
   }, [radarCategories, selectedRadarFiles])
 
-  // Build radar series for a section
-  function buildRadarSeriesFor(categories: string[], base: string | null, k: number | null) {
-    if (!base || k == null || categories.length === 0) return [] as { name: string; values: number[]; color: string }[]
-    const total = selectedRadarFiles.length
-    return selectedRadarFiles.map((f, idx) => {
-      const color = colorForIndex(idx, total)
-      const values = categories.map((cat) => {
-        const map = buildMetricMap(cat, f.data?.[cat])
-        let val: number | null = null
-        for (const [m, v] of Object.entries(map)) {
-          const { base: b, k: kk } = parseMetricName(m)
-          if (b === base && kk === k) {
-            const num = typeof v === 'number' ? v : Number(v)
-            if (Number.isFinite(num)) { val = num; break }
-          }
-        }
-        return val ?? 0
-      })
-      return { name: f.name || f.path, values, color }
-    })
-  }
+  // buildRadarSeriesFor moved to utils/series
 
   // Export Radar SVG per section
   function downloadRadarSvgAt(idx: number, sec: SavedRadar, useDarkBg: boolean) {
     const src = radarSvgRefs.current[idx]
     if (!src) { message.error('Radar chart not ready to export'); return }
-    const NS = 'http://www.w3.org/2000/svg'
-    const margin = 16
-    const titleFontSize = 14
-    const titleHeight = titleFontSize + 8
     const chartW = 860
     const chartH = 520
-    const totalW = margin + chartW + margin
-    const totalH = margin + titleHeight + chartH + margin
-    const outSvg = document.createElementNS(NS, 'svg')
-    outSvg.setAttribute('xmlns', NS)
-    outSvg.setAttribute('width', String(totalW))
-    outSvg.setAttribute('height', String(totalH))
-    const bg = document.createElementNS(NS, 'rect')
-    bg.setAttribute('x', '0')
-    bg.setAttribute('y', '0')
-    bg.setAttribute('width', String(totalW))
-    bg.setAttribute('height', String(totalH))
-    bg.setAttribute('fill', useDarkBg ? '#111' : '#ffffff')
-    outSvg.appendChild(bg)
-    const title = document.createElementNS(NS, 'text')
-    title.setAttribute('x', String(margin))
-    title.setAttribute('y', String(margin + titleFontSize))
-    title.setAttribute('font-size', String(titleFontSize))
-    title.setAttribute('font-family', 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif')
-    title.setAttribute('fill', useDarkBg ? '#ddd' : '#333')
     const catsTxt = (sec.categories || []).join(', ')
     const titleText = sec.metricBase && sec.k != null ? `Radar: ${sec.metricBase}@${sec.k} — ${catsTxt}` : 'Radar'
-    title.textContent = titleText
-    outSvg.appendChild(title)
-    const chartGroup = document.createElementNS(NS, 'g')
-    chartGroup.setAttribute('transform', `translate(${margin}, ${margin + titleHeight})`)
-    const cloned = src.cloneNode(true) as SVGSVGElement
-    cloned.removeAttribute('width')
-    cloned.removeAttribute('height')
-    const wrap = document.createElementNS(NS, 'g')
-    while (cloned.firstChild) wrap.appendChild(cloned.firstChild)
-    chartGroup.appendChild(wrap)
-    outSvg.appendChild(chartGroup)
-    const xml = new XMLSerializer().serializeToString(outSvg)
-    const blob = new Blob([xml], { type: 'image/svg+xml;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
     const compName = (activeSuiteId && savedSuites.find((x) => x.id === activeSuiteId)?.name) || 'comparison'
     const baseK = sec.metricBase && sec.k != null ? `${sec.metricBase}@${sec.k}` : 'metric'
     const file = sanitizeFilename(`${compName}_radar_${baseK}.svg`)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = file
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(url)
+    exportSvgWithTitle(src, chartW, chartH, titleText, file, useDarkBg)
   }
 
   // Export Radar PNG per section
   function downloadRadarPngAt(idx: number, sec: SavedRadar, useDarkBg: boolean) {
     const src = radarSvgRefs.current[idx]
     if (!src) { message.error('Radar chart not ready to export'); return }
-    const NS = 'http://www.w3.org/2000/svg'
-    const margin = 16
-    const titleFontSize = 14
-    const titleHeight = titleFontSize + 8
     const chartW = 860
     const chartH = 520
-    const totalW = margin + chartW + margin
-    const totalH = margin + titleHeight + chartH + margin
-    const outSvg = document.createElementNS(NS, 'svg')
-    outSvg.setAttribute('xmlns', NS)
-    outSvg.setAttribute('width', String(totalW))
-    outSvg.setAttribute('height', String(totalH))
-    const bg = document.createElementNS(NS, 'rect')
-    bg.setAttribute('x', '0')
-    bg.setAttribute('y', '0')
-    bg.setAttribute('width', String(totalW))
-    bg.setAttribute('height', String(totalH))
-    bg.setAttribute('fill', useDarkBg ? '#111' : '#ffffff')
-    outSvg.appendChild(bg)
-    const title = document.createElementNS(NS, 'text')
-    title.setAttribute('x', String(margin))
-    title.setAttribute('y', String(margin + titleFontSize))
-    title.setAttribute('font-size', String(titleFontSize))
-    title.setAttribute('font-family', 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif')
-    title.setAttribute('fill', useDarkBg ? '#ddd' : '#333')
     const catsTxt = (sec.categories || []).join(', ')
     const titleText = sec.metricBase && sec.k != null ? `Radar: ${sec.metricBase}@${sec.k} — ${catsTxt}` : 'Radar'
-    title.textContent = titleText
-    outSvg.appendChild(title)
-    const chartGroup = document.createElementNS(NS, 'g')
-    chartGroup.setAttribute('transform', `translate(${margin}, ${margin + titleHeight})`)
-    const cloned = src.cloneNode(true) as SVGSVGElement
-    cloned.removeAttribute('width')
-    cloned.removeAttribute('height')
-    const wrap = document.createElementNS(NS, 'g')
-    while (cloned.firstChild) wrap.appendChild(cloned.firstChild)
-    chartGroup.appendChild(wrap)
-    outSvg.appendChild(chartGroup)
-    const xml = new XMLSerializer().serializeToString(outSvg)
-    const svgBlob = new Blob([xml], { type: 'image/svg+xml;charset=utf-8' })
-    const url = URL.createObjectURL(svgBlob)
-    const img = new Image()
-    img.onload = () => {
-      const canvas = document.createElement('canvas')
-      canvas.width = totalW
-      canvas.height = totalH
-      const ctx = canvas.getContext('2d')!
-      ctx.fillStyle = useDarkBg ? '#111' : '#ffffff'
-      ctx.fillRect(0, 0, totalW, totalH)
-      ctx.drawImage(img, 0, 0)
-      URL.revokeObjectURL(url)
-      canvas.toBlob((blob) => {
-        if (!blob) return
-        const url2 = URL.createObjectURL(blob)
-        const compName = (activeSuiteId && savedSuites.find((x) => x.id === activeSuiteId)?.name) || 'comparison'
-        const baseK = sec.metricBase && sec.k != null ? `${sec.metricBase}@${sec.k}` : 'metric'
-        const file = sanitizeFilename(`${compName}_radar_${baseK}.png`)
-        const a = document.createElement('a')
-        a.href = url2
-        a.download = file
-        document.body.appendChild(a)
-        a.click()
-        a.remove()
-        URL.revokeObjectURL(url2)
-      }, 'image/png')
-    }
-    img.src = url
+    const compName = (activeSuiteId && savedSuites.find((x) => x.id === activeSuiteId)?.name) || 'comparison'
+    const baseK = sec.metricBase && sec.k != null ? `${sec.metricBase}@${sec.k}` : 'metric'
+    const file = sanitizeFilename(`${compName}_radar_${baseK}.png`)
+    exportPngWithTitle(src, chartW, chartH, titleText, file, useDarkBg)
   }
 
   // Collect available metric bases (intersection across chosen files and categories)
@@ -1380,255 +1124,107 @@ function App() {
     pendingSuiteDiagramsRef.current = null
   }, [commonDataKeys, selected, filesCache])
  
-  // Distinct color generator per chart to avoid duplicates
-  function colorForIndex(idx: number, total: number) {
-    const hue = Math.round((idx * 360) / Math.max(1, total))
-    const sat = 70
-    const light = isDark ? 60 : 45
-    return `hsl(${hue}, ${sat}%, ${light}%)`
-  }
-
-  function buildChartSeries(key: string, metricBase: string): Series[] {
-    const sel = Array.from(selected)
-    const validFiles = sel
-      .map((p) => filesCache[p])
-      .filter((f): f is LoadedFile => !!f && f.valid)
-    const series: Series[] = []
-    const total = validFiles.length
-    validFiles.forEach((f, idx) => {
-      const map = buildMetricMap(key, f.data?.[key])
-      const points: { k: number; value: number }[] = []
-      for (const [metricName, v] of Object.entries(map)) {
-        const { base, k } = parseMetricName(metricName)
-        if (base === metricBase && k != null) {
-          const num = typeof v === 'number' ? v : Number(v)
-          if (Number.isFinite(num)) points.push({ k, value: num })
-        }
-      }
-      points.sort((a, b) => a.k - b.k)
-      if (points.length > 0) {
-        const color = colorForIndex(idx, total)
-        series.push({ name: f.name || f.path, color, points })
-      }
-    })
-    return series
-  }
-
-  function sanitizeFilename(name: string) {
-    return name.replace(/[^a-z0-9_-]+/gi, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '')
-  }
+  // colorForIndex/buildChartSeries/sanitizeFilename moved to utils
 
   function downloadDiagram(idx: number, spec: { key: string; metricBase: string }, series: Series[], chartW: number, chartH: number) {
     const src = diagramSvgRefs.current[idx]
     if (!src) { message.error('Chart not ready to export'); return }
-    const NS = 'http://www.w3.org/2000/svg'
     const titleText = `Showing ${spec.metricBase} across k for data key ${spec.key}`
-    const margin = 16
-    const titleFontSize = 14
-    const titleHeight = titleFontSize + 8
     const legendItemH = 18
     const legendPadL = 16
     const legendW = 220
-    const legendH = Math.max(legendItemH * series.length, chartH)
-    const totalW = margin + chartW + legendPadL + legendW + margin
-    const totalH = margin + titleHeight + legendH + margin
-
-    const outSvg = document.createElementNS(NS, 'svg')
-    outSvg.setAttribute('xmlns', NS)
-    outSvg.setAttribute('width', String(totalW))
-    outSvg.setAttribute('height', String(totalH))
-
-    // Background to preserve dark mode visibility
-    const bg = document.createElementNS(NS, 'rect')
-    bg.setAttribute('x', '0')
-    bg.setAttribute('y', '0')
-    bg.setAttribute('width', String(totalW))
-    bg.setAttribute('height', String(totalH))
-    bg.setAttribute('fill', isDark ? '#111' : '#ffffff')
-    outSvg.appendChild(bg)
-
-    // Title
-    const title = document.createElementNS(NS, 'text')
-    title.setAttribute('x', String(margin))
-    title.setAttribute('y', String(margin + titleFontSize))
-    title.setAttribute('font-size', String(titleFontSize))
-    title.setAttribute('font-family', 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif')
-    title.setAttribute('fill', isDark ? '#ddd' : '#333')
-    title.textContent = titleText
-    outSvg.appendChild(title)
-
-    // Chart clone
-    const chartGroup = document.createElementNS(NS, 'g')
-    chartGroup.setAttribute('transform', `translate(${margin}, ${margin + titleHeight})`)
-    const cloned = src.cloneNode(true) as SVGSVGElement
-    // Ensure cloned SVG has no extra size that interferes; we use its content
-    cloned.removeAttribute('width')
-    cloned.removeAttribute('height')
-    // Move all children of cloned into a group to avoid nested svg
-    const wrap = document.createElementNS(NS, 'g')
-    while (cloned.firstChild) wrap.appendChild(cloned.firstChild)
-    chartGroup.appendChild(wrap)
-    outSvg.appendChild(chartGroup)
-
-    // Legend
-    const legendG = document.createElementNS(NS, 'g')
-    legendG.setAttribute('transform', `translate(${margin + chartW + legendPadL}, ${margin + titleHeight})`)
-    series.forEach((s, i) => {
-      const y = 2 + i * legendItemH
-      const dot = document.createElementNS(NS, 'rect')
-      dot.setAttribute('x', '0')
-      dot.setAttribute('y', String(y - 9))
-      dot.setAttribute('width', '12')
-      dot.setAttribute('height', '12')
-      dot.setAttribute('rx', '6')
-      dot.setAttribute('ry', '6')
-      dot.setAttribute('fill', s.color)
-      legendG.appendChild(dot)
-      const name = document.createElementNS(NS, 'text')
-      name.setAttribute('x', '18')
-      name.setAttribute('y', String(y))
-      name.setAttribute('font-size', '12')
-      name.setAttribute('font-family', 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif')
-      name.setAttribute('fill', isDark ? '#ddd' : '#333')
-      name.textContent = s.name
-      legendG.appendChild(name)
-    })
-    outSvg.appendChild(legendG)
-
-    const xml = new XMLSerializer().serializeToString(outSvg)
-    const blob = new Blob([xml], { type: 'image/svg+xml;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
+    const effectiveH = Math.max(legendItemH * series.length, chartH)
     const compName = (activeSuiteId && savedSuites.find((x) => x.id === activeSuiteId)?.name) || 'comparison'
     const file = sanitizeFilename(`${compName}_${spec.key}_${spec.metricBase}.svg`)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = file
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(url)
+    exportSvgWithTitle(src, chartW, effectiveH, titleText, file, isDark, {
+      extraRight: legendPadL + legendW,
+      postProcessWrap: (wrap) => {
+        const NS = 'http://www.w3.org/2000/svg'
+        const legendG = document.createElementNS(NS, 'g')
+        legendG.setAttribute('transform', `translate(${chartW + legendPadL}, 0)`)
+        series.forEach((s, i) => {
+          const y = 2 + i * legendItemH
+          const dot = document.createElementNS(NS, 'rect')
+          dot.setAttribute('x', '0')
+          dot.setAttribute('y', String(y - 9))
+          dot.setAttribute('width', '12')
+          dot.setAttribute('height', '12')
+          dot.setAttribute('rx', '6')
+          dot.setAttribute('ry', '6')
+          dot.setAttribute('fill', s.color)
+          legendG.appendChild(dot)
+          const name = document.createElementNS(NS, 'text')
+          name.setAttribute('x', '18')
+          name.setAttribute('y', String(y))
+          name.setAttribute('font-size', '12')
+          name.setAttribute('font-family', 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif')
+          name.setAttribute('fill', isDark ? '#ddd' : '#333')
+          name.textContent = s.name
+          legendG.appendChild(name)
+        })
+        wrap.appendChild(legendG)
+      },
+    })
   }
 
-  function downloadDiagramPng(idx: number, spec: { key: string; metricBase: string }, series: Series[], chartW: number, chartH: number, useDarkBg: boolean) {
+  function downloadDiagramPng(
+    idx: number,
+    spec: { key: string; metricBase: string },
+    series: Series[],
+    chartW: number,
+    chartH: number,
+    useDarkBg: boolean,
+  ) {
     const src = diagramSvgRefs.current[idx]
     if (!src) { message.error('Chart not ready to export'); return }
-    const NS = 'http://www.w3.org/2000/svg'
     const titleText = `Showing ${spec.metricBase} across k for data key ${spec.key}`
-    const margin = 16
-    const titleFontSize = 14
-    const titleHeight = titleFontSize + 8
     const legendItemH = 18
     const legendPadL = 16
     const legendW = 220
-    const legendH = Math.max(legendItemH * series.length, chartH)
-    const totalW = margin + chartW + legendPadL + legendW + margin
-    const totalH = margin + titleHeight + legendH + margin
+    const effectiveH = Math.max(legendItemH * series.length, chartH)
+    const compName = (activeSuiteId && savedSuites.find((x) => x.id === activeSuiteId)?.name) || 'comparison'
+    const file = sanitizeFilename(`${compName}_${spec.key}_${spec.metricBase}.png`)
+    exportPngWithTitle(src, chartW, effectiveH, titleText, file, useDarkBg, {
+      extraRight: legendPadL + legendW,
+      postProcessWrap: (wrap) => {
+        // Adjust axis colors to match export theme
+        const axisText = wrap.querySelectorAll<SVGTextElement>('.tick text, .axis-label-x, .axis-label-y')
+        axisText.forEach((t) => t.setAttribute('fill', useDarkBg ? '#ddd' : '#333'))
+        const domainLines = wrap.querySelectorAll<SVGPathElement>('.domain')
+        domainLines.forEach((d) => { d.setAttribute('stroke', useDarkBg ? '#ddd' : '#333'); (d as any).style.opacity = '0.9' })
+        const tickLines = wrap.querySelectorAll<SVGLineElement>('.tick line')
+        tickLines.forEach((l) => { l.setAttribute('stroke', useDarkBg ? '#ddd' : '#333'); (l as any).style.opacity = '0.35' })
 
-    const outSvg = document.createElementNS(NS, 'svg')
-    outSvg.setAttribute('xmlns', NS)
-    outSvg.setAttribute('width', String(totalW))
-    outSvg.setAttribute('height', String(totalH))
-
-    const bg = document.createElementNS(NS, 'rect')
-    bg.setAttribute('x', '0')
-    bg.setAttribute('y', '0')
-    bg.setAttribute('width', String(totalW))
-    bg.setAttribute('height', String(totalH))
-    bg.setAttribute('fill', useDarkBg ? '#111' : '#ffffff')
-    outSvg.appendChild(bg)
-
-    const title = document.createElementNS(NS, 'text')
-    title.setAttribute('x', String(margin))
-    title.setAttribute('y', String(margin + titleFontSize))
-    title.setAttribute('font-size', String(titleFontSize))
-    title.setAttribute('font-family', 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif')
-    title.setAttribute('fill', useDarkBg ? '#ddd' : '#333')
-    title.textContent = titleText
-    outSvg.appendChild(title)
-
-    const chartGroup = document.createElementNS(NS, 'g')
-    chartGroup.setAttribute('transform', `translate(${margin}, ${margin + titleHeight})`)
-    const cloned = src.cloneNode(true) as SVGSVGElement
-    cloned.removeAttribute('width')
-    cloned.removeAttribute('height')
-    const wrap = document.createElementNS(NS, 'g')
-    while (cloned.firstChild) wrap.appendChild(cloned.firstChild)
-    // Adjust axis text/lines color to match background choice
-    const axisText = wrap.querySelectorAll<SVGTextElement>('.tick text')
-    axisText.forEach((t) => t.setAttribute('fill', useDarkBg ? '#ddd' : '#333'))
-    const domainLines = wrap.querySelectorAll<SVGPathElement>('.domain')
-    domainLines.forEach((d) => {
-      d.setAttribute('stroke', useDarkBg ? '#ddd' : '#333')
-      d.style.opacity = '0.4'
+        // Append legend on the right
+        const NS = 'http://www.w3.org/2000/svg'
+        const legendG = document.createElementNS(NS, 'g')
+        legendG.setAttribute('transform', `translate(${chartW + legendPadL}, 0)`)
+        series.forEach((s, i) => {
+          const y = 2 + i * legendItemH
+          const dot = document.createElementNS(NS, 'rect')
+          dot.setAttribute('x', '0')
+          dot.setAttribute('y', String(y - 9))
+          dot.setAttribute('width', '12')
+          dot.setAttribute('height', '12')
+          dot.setAttribute('rx', '6')
+          dot.setAttribute('ry', '6')
+          dot.setAttribute('fill', s.color)
+          legendG.appendChild(dot)
+          const name = document.createElementNS(NS, 'text')
+          name.setAttribute('x', '18')
+          name.setAttribute('y', String(y))
+          name.setAttribute('font-size', '12')
+          name.setAttribute('font-family', 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif')
+          name.setAttribute('fill', useDarkBg ? '#ddd' : '#333')
+          name.textContent = s.name
+          legendG.appendChild(name)
+        })
+        wrap.appendChild(legendG)
+      },
     })
-    const tickLines = wrap.querySelectorAll<SVGLineElement>('.tick line')
-    tickLines.forEach((l) => {
-      l.setAttribute('stroke', useDarkBg ? '#ddd' : '#333')
-      l.style.opacity = '0.2'
-    })
-    chartGroup.appendChild(wrap)
-    outSvg.appendChild(chartGroup)
-
-    const legendG = document.createElementNS(NS, 'g')
-    legendG.setAttribute('transform', `translate(${margin + chartW + legendPadL}, ${margin + titleHeight})`)
-    series.forEach((s, i) => {
-      const y = 2 + i * 18
-      const dot = document.createElementNS(NS, 'rect')
-      dot.setAttribute('x', '0')
-      dot.setAttribute('y', String(y - 9))
-      dot.setAttribute('width', '12')
-      dot.setAttribute('height', '12')
-      dot.setAttribute('rx', '6')
-      dot.setAttribute('ry', '6')
-      dot.setAttribute('fill', s.color)
-      legendG.appendChild(dot)
-      const name = document.createElementNS(NS, 'text')
-      name.setAttribute('x', '18')
-      name.setAttribute('y', String(y))
-      name.setAttribute('font-size', '12')
-      name.setAttribute('font-family', 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif')
-      name.setAttribute('fill', useDarkBg ? '#ddd' : '#333')
-      name.textContent = s.name
-      legendG.appendChild(name)
-    })
-    outSvg.appendChild(legendG)
-
-    const xml = new XMLSerializer().serializeToString(outSvg)
-    const svgUrl = URL.createObjectURL(new Blob([xml], { type: 'image/svg+xml;charset=utf-8' }))
-    const img = new Image()
-    img.onload = () => {
-      const canvas = document.createElement('canvas')
-      canvas.width = totalW
-      canvas.height = totalH
-      const ctx = canvas.getContext('2d')
-      if (!ctx) { URL.revokeObjectURL(svgUrl); message.error('Canvas not supported'); return }
-      ctx.fillStyle = useDarkBg ? '#111' : '#ffffff'
-      ctx.fillRect(0, 0, totalW, totalH)
-      ctx.drawImage(img, 0, 0)
-      canvas.toBlob((blob) => {
-        if (!blob) { URL.revokeObjectURL(svgUrl); message.error('Failed to export PNG'); return }
-        const url2 = URL.createObjectURL(blob)
-        const compName = (activeSuiteId && savedSuites.find((x) => x.id === activeSuiteId)?.name) || 'comparison'
-        const file = sanitizeFilename(`${compName}_${spec.key}_${spec.metricBase}.png`)
-        const a = document.createElement('a')
-        a.href = url2
-        a.download = file
-        document.body.appendChild(a)
-        a.click()
-        a.remove()
-        URL.revokeObjectURL(url2)
-        URL.revokeObjectURL(svgUrl)
-      }, 'image/png')
-    }
-    img.onerror = () => {
-      URL.revokeObjectURL(svgUrl)
-      message.error('Failed to render PNG')
-    }
-    img.src = svgUrl
   }
-  // Build table data for a given data key
-  function getTableConfig(key: string | null, sectionIndex?: number) {
-    if (!key) return { columns: [], dataSource: [] as any[] }
+
+  function getTableConfig(key: string, sectionIndex: number) {
     const sel = Array.from(selected)
     const selectedFiles = sel.map((p) => filesCache[p])
     const validFiles = selectedFiles.filter((f): f is LoadedFile => !!f && f.valid)
@@ -2123,7 +1719,7 @@ function App() {
                     >
                       {diagramSections.map((spec, idx) => {
                         const metricBases = spec.key ? Array.from(getAvailableMetricBasesForKey(spec.key)) : []
-                        const series = spec.key && spec.metricBase ? buildChartSeries(spec.key, spec.metricBase) : []
+                        const series = spec.key && spec.metricBase ? buildChartSeries(selected, filesCache, spec.key, spec.metricBase, isDark) : []
                         return (
                           <div key={`diagram-${idx}`} style={{ border: '1px solid #e5e5e5', borderRadius: 8, padding: 12, color: isDark ? '#fff' : '#000' }}>
                             <div style={{ marginBottom: 8, fontWeight: 500, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -2259,6 +1855,33 @@ function App() {
               ),
             },
             {
+              key: 'pareto',
+              label: <span style={{ color: isDark ? '#fff' : '#000' }}>Pareto</span>,
+              children: (
+                <ParetoTab
+                  isDark={isDark}
+                  selectedValidFiles={selectedValidFiles}
+                  commonDataKeys={commonDataKeys}
+                  paretoBaseline={paretoBaseline}
+                  setParetoBaseline={setParetoBaseline}
+                  paretoVariant={paretoVariant}
+                  setParetoVariant={setParetoVariant}
+                  paretoCategories={paretoCategories}
+                  setParetoCategories={setParetoCategories}
+                  paretoSections={paretoSections}
+                  setParetoSections={setParetoSections}
+                  paretoMetricBases={paretoMetricBases}
+                  paretoKs={paretoKs}
+                  getParetoKsByBaseFor={getParetoKsByBaseFor}
+                  buildParetoPointsForSection={buildParetoPointsForSection}
+                  downloadParetoPngAt={downloadParetoPngAt}
+                  downloadParetoSvgAt={downloadParetoSvgAt}
+                  setParetoSvgRef={setParetoSvgRef}
+                  getMetricDescription={getMetricDescription}
+                />
+              ),
+            },
+            {
               key: 'radar',
               label: <span style={{ color: isDark ? '#fff' : '#000' }}>Radar</span>,
               children: (
@@ -2280,9 +1903,9 @@ function App() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                       {radarSections.map((sec, idx) => {
                         const catsForSec = radarCategories
-                        const bases = getRadarMetricBasesFor(catsForSec)
-                        const ks = getRadarKsFor(catsForSec, sec.metricBase)
-                        const series = buildRadarSeriesFor(catsForSec, sec.metricBase, sec.k)
+                        const bases = getRadarMetricBasesFor(selectedRadarFiles, catsForSec)
+                        const ks = getRadarKsFor(selectedRadarFiles, catsForSec, sec.metricBase)
+                        const series = buildRadarSeriesFor(selectedRadarFiles, catsForSec, sec.metricBase, sec.k, isDark)
                         const isPlaceholder = (!sec.metricBase || sec.k == null)
                         return (
                           <div key={`radar-sec-${idx}`} style={{ border: '1px solid #e5e5e5', borderRadius: 8, padding: 12, color: isDark ? '#fff' : '#000' }}>
@@ -2395,304 +2018,9 @@ function App() {
                 </div>
               ),
             },
-            {
-              key: 'pareto',
-              label: <span style={{ color: isDark ? '#fff' : '#000' }}>Pareto</span>,
-              children: (
-                <div className={`pareto-pane ${isDark ? 'dark' : 'light'}`}>
-                  <Divider orientation="left">Pareto Frontier Comparison</Divider>
-                  <Space direction="vertical" style={{ width: '100%' }} size={12}>
-                    {/* Global selectors: shared across sections */}
-                    <Space wrap>
-                      <div>
-                        <div className="form-label" style={{ marginBottom: 4 }}>Baseline method</div>
-                        <Select
-                          style={{ width: 280 }}
-                          placeholder="Select baseline"
-                          value={paretoBaseline ?? undefined}
-                          onChange={(v) => setParetoBaseline(v)}
-                          options={selectedValidFiles.map((f) => ({ label: f.name || f.path, value: f.path }))}
-                          getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
-                        />
-                      </div>
-                      <div>
-                        <div className="form-label" style={{ marginBottom: 4 }}>Variant method</div>
-                        <Select
-                          style={{ width: 280 }}
-                          placeholder="Select variant"
-                          value={paretoVariant ?? undefined}
-                          onChange={(v) => setParetoVariant(v)}
-                          options={selectedValidFiles.map((f) => ({ label: f.name || f.path, value: f.path }))}
-                          getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
-                        />
-                      </div>
-                      <div>
-                        <div className="form-label" style={{ marginBottom: 4 }}>Categories</div>
-                        <Select
-                          mode="multiple"
-                          style={{ minWidth: 360 }}
-                          placeholder="Select categories (data keys)"
-                          value={paretoCategories}
-                          onChange={(vals) => setParetoCategories(vals)}
-                          options={commonDataKeys.map((k) => ({ label: k, value: k }))}
-                          getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
-                        />
-                      </div>
-                    </Space>
-                    {/* Sections: each has metrics + k + display + chart */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                      {paretoSections.map((sec, idx) => {
-                        const catsForSec = (sec.categories && sec.categories.length > 0) ? sec.categories : paretoCategories
-                        const ksByBase = getParetoKsByBaseFor(sec.metricBases && sec.metricBases.length ? sec.metricBases : [], catsForSec)
-                        const points = buildParetoPointsForSection(sec)
-                        const singleBase = sec.metricBases && sec.metricBases.length === 1 ? sec.metricBases[0] : (sec.metricBase || null)
-                        const singleKs = singleBase ? (sec.metricKByBase?.[singleBase] || (sec.ks && sec.ks.length ? sec.ks : (sec.k != null ? [sec.k] : []))) : []
-                        const showXLabel = singleBase && singleKs.length === 1 ? `${singleBase}@${singleKs[0]} (baseline)` : 'baseline'
-                        const showYLabel = singleBase && singleKs.length === 1 ? `${singleBase}@${singleKs[0]} (variant)` : 'variant'
-                        const isPlaceholder = (!sec.metricBases || sec.metricBases.length === 0) && !sec.metricBase
-                        return (
-                          <div key={`pareto-sec-${idx}`} style={{ border: '1px solid #e5e5e5', borderRadius: 8, padding: 12, color: isDark ? '#fff' : '#000' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                              <div style={{ fontWeight: 500 }}>Pareto section {idx + 1}</div>
-                              <Space>
-                                {/* Delete section (except keep at least one placeholder) */}
-                                {(!isPlaceholder || paretoSections.length > 1) && (
-                                  <Popconfirm title="Remove this section?" onConfirm={() => {
-                                    setParetoSections((prev) => {
-                                      const next = prev.filter((_, i) => i !== idx)
-                                      return next.length > 0 ? next : [{ baseline: null, variant: null, categories: paretoCategories, metricBases: [], ks: [], metricKByBase: {}, showFrontier: true, showDiagonal: true, maximize: 'none', maximizeX: false, maximizeY: false }]
-                                    })
-                                  }}>
-                                    <Button size="small" danger>Remove</Button>
-                                  </Popconfirm>
-                                )}
-                                <Dropdown
-                                  menu={{
-                                    items: [
-                                      { key: 'png-light', label: 'PNG (Light bg)' },
-                                      { key: 'png-dark', label: 'PNG (Dark bg)' },
-                                      { key: 'svg', label: 'SVG' },
-                                    ],
-                                    onClick: ({ key }) => {
-                                      const enriched: SavedPareto = {
-                                        ...sec,
-                                        baseline: paretoBaseline,
-                                        variant: paretoVariant,
-                                        categories: (sec.categories && sec.categories.length > 0) ? sec.categories : paretoCategories,
-                                        maximizeX: sec.maximize === 'x' || sec.maximizeX,
-                                        maximizeY: sec.maximize === 'y' || sec.maximizeY,
-                                      }
-                                      if (key === 'png-light') downloadParetoPngAt(idx, enriched, false)
-                                      else if (key === 'png-dark') downloadParetoPngAt(idx, enriched, true)
-                                      else if (key === 'svg') downloadParetoSvgAt(idx, enriched)
-                                    },
-                                  }}
-                                >
-                                  <Button size="small" icon={<DownloadOutlined />}>Download</Button>
-                                </Dropdown>
-                              </Space>
-                            </div>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', marginBottom: 8 }}>
-                              <div>
-                                <div className="form-label" style={{ marginBottom: 4 }}>Categories (section)</div>
-                                <Select
-                                  mode="multiple"
-                                  style={{ minWidth: 260 }}
-                                  placeholder="Select categories"
-                                  value={(sec.categories && sec.categories.length > 0) ? sec.categories : paretoCategories}
-                                  onChange={(vals) => {
-                                    setParetoSections((prev) => {
-                                      const next = [...prev]
-                                      next[idx] = { ...next[idx], categories: vals as string[] }
-                                      if (idx === prev.length - 1 && isPlaceholder) {
-                                        next.push({ baseline: null, variant: null, categories: paretoCategories, metricBases: [], ks: [], metricKByBase: {}, showFrontier: true, showDiagonal: true, maximize: 'none', maximizeX: false, maximizeY: false })
-                                      }
-                                      return next
-                                    })
-                                  }}
-                                  options={commonDataKeys.map((k) => ({ label: k, value: k }))}
-                                  getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
-                                />
-                              </div>
-                              <div>
-                                <div className="form-label" style={{ marginBottom: 4 }}>Metric base(s)</div>
-                                <Select
-                                  mode="multiple"
-                                  style={{ minWidth: 260 }}
-                                  placeholder="Metric base(s)"
-                                  value={sec.metricBases ?? []}
-                                  onChange={(vals) => {
-                                    setParetoSections((prev) => {
-                                      const next = [...prev]
-                                      const updated: SavedPareto = {
-                                        ...next[idx],
-                                        baseline: paretoBaseline,
-                                        variant: paretoVariant,
-                                        // keep section-specific categories unchanged
-                                        metricBases: vals,
-                                        metricBase: null,
-                                      }
-                                      next[idx] = updated
-                                      // auto-add placeholder at end
-                                      if (idx === prev.length - 1) {
-                                        next.push({ baseline: null, variant: null, categories: paretoCategories, metricBases: [], ks: [], metricKByBase: {}, showFrontier: true, showDiagonal: true, maximize: 'none', maximizeX: false, maximizeY: false })
-                                      }
-                                      return next
-                                    })
-                                  }}
-                                  options={paretoMetricBases.map((b) => {
-                                    const desc = getMetricDescription(b)
-                                    return {
-                                      label: (
-                                        <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-                                          {b.toUpperCase()}
-                                          {desc && (
-                                            <Tooltip title={desc}>
-                                              <InfoCircleOutlined style={{ marginLeft: 6, color: isDark ? '#bbb' : '#999' }} />
-                                            </Tooltip>
-                                          )}
-                                        </span>
-                                      ),
-                                      value: b,
-                                    }
-                                  })}
-                                  getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
-                                />
-                              </div>
-                              {sec.metricBases && sec.metricBases.length > 0 && (
-                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                                  {sec.metricBases.map((base) => {
-                                    const desc = getMetricDescription(base)
-                                    const selectedKs = sec.metricKByBase?.[base] ?? []
-                                    const options = (ksByBase[base] || []).map((k) => ({ label: String(k), value: k }))
-                                    return (
-                                      <div key={`${idx}-${base}`} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                        <Tag color={isDark ? '#555' : '#ddd'} style={{ color: isDark ? '#fff' : '#333' }}>
-                                          <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-                                            {base}
-                                            {desc && (
-                                              <Tooltip title={desc}>
-                                                <InfoCircleOutlined style={{ marginLeft: 6, color: isDark ? '#bbb' : '#999' }} />
-                                              </Tooltip>
-                                            )}
-                                          </span>
-                                        </Tag>
-                                        <Select
-                                          mode="multiple"
-                                          size="small"
-                                          style={{ width: 140 }}
-                                          value={selectedKs}
-                                          onChange={(vals) => {
-                                            setParetoSections((prev) => {
-                                              const next = [...prev]
-                                              const mkb = { ...(next[idx].metricKByBase || {}) }
-                                              mkb[base] = vals as number[]
-                                              next[idx] = { ...next[idx], metricKByBase: mkb }
-                                              return next
-                                            })
-                                          }}
-                                          options={options}
-                                          placeholder="k(s)"
-                                          getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
-                                        />
-                                      </div>
-                                    )
-                                  })}
-                                </div>
-                              )}
-                              {/* Legacy single selectors if no bases chosen */}
-                              {(!sec.metricBases || sec.metricBases.length === 0) && (
-                                <>
-                                  <Select
-                                    style={{ width: 160 }}
-                                    placeholder="Metric"
-                                    value={sec.metricBase ?? undefined}
-                                    onChange={(v) => {
-                                      setParetoSections((prev) => {
-                                        const next = [...prev]
-                                        next[idx] = { ...next[idx], baseline: paretoBaseline, variant: paretoVariant, metricBase: v }
-                                        if (idx === prev.length - 1) next.push({ baseline: null, variant: null, categories: paretoCategories, metricBases: [], ks: [], metricKByBase: {}, showFrontier: true, showDiagonal: true, maximize: 'none', maximizeX: false, maximizeY: false })
-                                        return next
-                                      })
-                                    }}
-                                    options={paretoMetricBases.map((b) => ({ label: b.toUpperCase(), value: b }))}
-                                    getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
-                                  />
-                                  <Select
-                                    style={{ width: 120 }}
-                                    placeholder="k"
-                                    value={(sec.ks && sec.ks[0]) ?? (sec.k ?? undefined)}
-                                    onChange={(v) => {
-                                      setParetoSections((prev) => {
-                                        const next = [...prev]
-                                        const kVal = Number(v)
-                                        const hasKs = Array.isArray(next[idx].ks) && next[idx].ks!.length > 0
-                                        next[idx] = hasKs ? { ...next[idx], ks: [kVal] } : { ...next[idx], k: kVal }
-                                        if (idx === prev.length - 1) next.push({ baseline: null, variant: null, categories: paretoCategories, metricBases: [], ks: [], metricKByBase: {}, showFrontier: true, showDiagonal: true, maximize: 'none', maximizeX: false, maximizeY: false })
-                                        return next
-                                      })
-                                    }}
-                                    options={(sec.metricBase ? (getParetoKsByBaseFor([sec.metricBase], (sec.categories && sec.categories.length > 0) ? sec.categories : paretoCategories)[sec.metricBase] || []) : paretoKs).map((k) => ({ label: String(k), value: k }))}
-                                    getPopupContainer={(t) => (t.parentElement as HTMLElement) || t}
-                                  />
-                                </>
-                              )}
-                              <div style={{ marginLeft: 'auto' }}>
-                                <div className="form-label" style={{ marginBottom: 4 }}>Display</div>
-                                <Space>
-                                  <span className="form-inline-label">Frontier</span>
-                                  <Switch checked={!!sec.showFrontier} onChange={(val) => setParetoSections((prev) => { const next = [...prev]; next[idx] = { ...next[idx], showFrontier: val }; return next })} />
-                                  <span className="form-inline-label">Diagonal</span>
-                                  <Switch checked={!!sec.showDiagonal} onChange={(val) => setParetoSections((prev) => { const next = [...prev]; next[idx] = { ...next[idx], showDiagonal: val }; return next })} />
-                                  <span className="form-inline-label">Maximize</span>
-                                  <Segmented
-                                    size="small"
-                                    options={[
-                                      { label: (<span><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 999, background: '#2ca02c', marginRight: 6 }} />Y</span>), value: 'y' },
-                                      { label: (<span><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 999, background: '#8a8a8a', marginRight: 6 }} />None</span>), value: 'none' },
-                                      { label: (<span><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 999, background: '#d67c00', marginRight: 6 }} />X</span>), value: 'x' },
-                                    ]}
-                                    value={sec.maximize ?? 'none'}
-                                    onChange={(v) => setParetoSections((prev) => { const next = [...prev]; next[idx] = { ...next[idx], maximize: v as 'y' | 'none' | 'x', maximizeX: v === 'x', maximizeY: v === 'y' }; return next })}
-                                    className={`tri tri-${sec.maximize ?? 'none'}`}
-                                  />
-                                </Space>
-                              </div>
-                            </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                              <div style={{ color: isDark ? '#aaa' : '#666', maxWidth: 900, fontSize: 12, alignSelf: 'center', textAlign: 'center' }}>
-                                Compare categories by plotting baseline (X) vs variant (Y) for the selected metric and k. Points above the diagonal favor the variant.
-                              </div>
-                              <div style={{ alignSelf: 'center' }}>
-                                <ParetoChart
-                                  points={points}
-                                  width={900}
-                                  height={520}
-                                  isDark={isDark}
-                                  xLabel={showXLabel}
-                                  yLabel={showYLabel}
-                                  showFrontier={!!sec.showFrontier}
-                                  showDiagonal={!!sec.showDiagonal}
-                                  maximizeX={!!sec.maximizeX || sec.maximize === 'x'}
-                                  maximizeY={!!sec.maximizeY || sec.maximize === 'y'}
-                                  exportRef={(el: SVGSVGElement | null) => { paretoSvgRefs.current[idx] = el }}
-                                />
-                              </div>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </Space>
-                </div>
-              ),
-            },
           ]}
         />
-
       </section>
-      {/* Filter Add/Edit Modal */}
-      {/* Diagram Preview Modal */}
       <Modal
         open={!!previewDiagram}
         onCancel={() => { setPreviewDiagram(null); setPreviewHighlight(null) }}
