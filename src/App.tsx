@@ -71,7 +71,24 @@ function App() {
     const chartH = 520
     const compName = (activeSuiteId && savedSuites.find((x) => x.id === activeSuiteId)?.name) || 'comparison'
     const file = sanitizeFilename(`${compName}_pareto_${(baseK || 'metric').replace(/[^a-z0-9_@,-]+/gi, '-')}.svg`)
-    exportSvgWithTitle(src, chartW, chartH, titleText, file, isDark)
+    // Post-process cloned SVG so exported labels/axes are high-contrast for the chosen background
+    exportSvgWithTitle(src, chartW, chartH, titleText, file, isDark, (wrap) => {
+      const useDarkBg = isDark
+      // Axis tick text
+      const axisText = wrap.querySelectorAll<SVGTextElement>('.tick text')
+      axisText.forEach((t) => t.setAttribute('fill', useDarkBg ? '#ddd' : '#222'))
+      // Axis labels (x/y)
+      const axisLabels = wrap.querySelectorAll<SVGTextElement>('.axis-label-x, .axis-label-y')
+      axisLabels.forEach((t) => { t.setAttribute('fill', useDarkBg ? '#ddd' : '#111'); (t as any).style.opacity = '1' })
+      // Point labels next to dots
+      const pointLabels = wrap.querySelectorAll<SVGTextElement>('text.ppl')
+      pointLabels.forEach((t) => t.setAttribute('fill', useDarkBg ? '#ddd' : '#222'))
+      // Axis strokes
+      const domainLines = wrap.querySelectorAll<SVGPathElement>('.domain')
+      domainLines.forEach((d) => { d.setAttribute('stroke', useDarkBg ? '#ddd' : '#333'); (d as any).style.opacity = '0.4' })
+      const tickLines = wrap.querySelectorAll<SVGLineElement>('.tick line')
+      tickLines.forEach((l) => { l.setAttribute('stroke', useDarkBg ? '#ddd' : '#333'); (l as any).style.opacity = '0.2' })
+    })
   }
 
   // Export Pareto chart (PNG) for a section
@@ -94,7 +111,13 @@ function App() {
     const file = sanitizeFilename(`${compName}_pareto_${(baseK || 'metric').replace(/[^a-z0-9_@,-]+/gi, '-')}.png`)
     exportPngWithTitle(src, chartW, chartH, titleText, file, useDarkBg, (wrap) => {
       const axisText = wrap.querySelectorAll<SVGTextElement>('.tick text')
-      axisText.forEach((t) => t.setAttribute('fill', useDarkBg ? '#ddd' : '#333'))
+      axisText.forEach((t) => t.setAttribute('fill', useDarkBg ? '#ddd' : '#222'))
+      // Axis labels (x/y)
+      const axisLabels = wrap.querySelectorAll<SVGTextElement>('.axis-label-x, .axis-label-y')
+      axisLabels.forEach((t) => { t.setAttribute('fill', useDarkBg ? '#ddd' : '#111'); (t as any).style.opacity = '1' })
+      // Point labels next to dots
+      const pointLabels = wrap.querySelectorAll<SVGTextElement>('text.ppl')
+      pointLabels.forEach((t) => t.setAttribute('fill', useDarkBg ? '#ddd' : '#222'))
       const domainLines = wrap.querySelectorAll<SVGPathElement>('.domain')
       domainLines.forEach((d) => { d.setAttribute('stroke', useDarkBg ? '#ddd' : '#333'); (d as any).style.opacity = '0.4' })
       const tickLines = wrap.querySelectorAll<SVGLineElement>('.tick line')
@@ -864,7 +887,15 @@ function App() {
     const compName = (activeSuiteId && savedSuites.find((x) => x.id === activeSuiteId)?.name) || 'comparison'
     const baseK = sec.metricBase && sec.k != null ? `${sec.metricBase}@${sec.k}` : 'metric'
     const file = sanitizeFilename(`${compName}_radar_${baseK}.svg`)
-    exportSvgWithTitle(src, chartW, chartH, titleText, file, useDarkBg)
+    // Ensure high-contrast text and point strokes on export based on background
+    exportSvgWithTitle(src, chartW, chartH, titleText, file, useDarkBg, (wrap) => {
+      // Darken all chart texts (category labels, ring labels, legend)
+      const texts = wrap.querySelectorAll<SVGTextElement>('text')
+      texts.forEach((t) => t.setAttribute('fill', useDarkBg ? '#ddd' : '#222'))
+      // Make radar point outlines darker on light to improve visibility
+      const pts = wrap.querySelectorAll<SVGCircleElement>('g.radar-points circle')
+      pts.forEach((c) => c.setAttribute('stroke', useDarkBg ? '#111' : '#333'))
+    })
   }
 
   // Export Radar PNG per section
@@ -878,7 +909,14 @@ function App() {
     const compName = (activeSuiteId && savedSuites.find((x) => x.id === activeSuiteId)?.name) || 'comparison'
     const baseK = sec.metricBase && sec.k != null ? `${sec.metricBase}@${sec.k}` : 'metric'
     const file = sanitizeFilename(`${compName}_radar_${baseK}.png`)
-    exportPngWithTitle(src, chartW, chartH, titleText, file, useDarkBg)
+    exportPngWithTitle(src, chartW, chartH, titleText, file, useDarkBg, (wrap) => {
+      // Darken all chart texts (category labels, ring labels, legend)
+      const texts = wrap.querySelectorAll<SVGTextElement>('text')
+      texts.forEach((t) => t.setAttribute('fill', useDarkBg ? '#ddd' : '#222'))
+      // Make radar point outlines darker on light to improve visibility
+      const pts = wrap.querySelectorAll<SVGCircleElement>('g.radar-points circle')
+      pts.forEach((c) => c.setAttribute('stroke', useDarkBg ? '#111' : '#333'))
+    })
   }
 
   // Collect available metric bases (intersection across chosen files and categories)
@@ -1822,14 +1860,9 @@ function App() {
                             )}
                             {spec.key && spec.metricBase && series.length > 0 && (
                               <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12, alignItems: 'flex-start' }}>
-                                <Tooltip title="Click to enlarge">
-                                  <div
-                                    onClick={() => setPreviewDiagram({ key: spec.key!, metricBase: spec.metricBase! })}
-                                    style={{ cursor: 'zoom-in' }}
-                                  >
-                                    <LineChart series={series} width={280} height={200} isDark={isDark} exportRef={(el: SVGSVGElement | null) => { diagramSvgRefs.current[idx] = el }} />
-                                  </div>
-                                </Tooltip>
+                                <div onClick={() => setPreviewDiagram({ key: spec.key!, metricBase: spec.metricBase! })}>
+                                  <LineChart series={series} width={280} height={200} isDark={isDark} exportRef={(el: SVGSVGElement | null) => { diagramSvgRefs.current[idx] = el }} />
+                                </div>
                                 <div style={{ minWidth: 120 }}>
                                   <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
                                     {series.map((s) => (
@@ -2040,6 +2073,7 @@ function App() {
                 highlightedSeries={previewHighlight}
                 xLabel="k"
                 yLabel={previewDiagram.metricBase || 'value'}
+                labelColor={isDark ? '#e6e6e6' : '#111'}
               />
             </div>
             <div style={{ minWidth: 280 }}>

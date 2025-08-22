@@ -11,9 +11,10 @@ type Props = {
   highlightedSeries?: string | null
   xLabel?: string
   yLabel?: string
+  labelColor?: string
 }
 
-export default function LineChart({ series, width = 860, height = 320, isDark = false, exportRef, highlightedSeries = null, xLabel, yLabel }: Props) {
+export default function LineChart({ series, width = 860, height = 320, isDark = false, exportRef, highlightedSeries = null, xLabel, yLabel, labelColor }: Props) {
   const ref = useRef<SVGSVGElement | null>(null)
   useEffect(() => {
     const svg = d3.select(ref.current).style('color', isDark ? '#fff' : '#000')
@@ -42,7 +43,8 @@ export default function LineChart({ series, width = 860, height = 320, isDark = 
     g.append('g').call(yAxis as any)
 
     // High-contrast axis styling for visibility on white and dark backgrounds
-    const axisTextColor = isDark ? '#e6e6e6' : '#333'
+    const axisTextColor = isDark ? '#e6e6e6' : '#222'
+    const axisLabelColor = labelColor ?? axisTextColor
     const axisStrokeColor = isDark ? '#b5b5b5' : '#444'
     g.selectAll('.tick text').attr('fill', axisTextColor)
     g.selectAll('.domain')
@@ -61,8 +63,8 @@ export default function LineChart({ series, width = 860, height = 320, isDark = 
         .attr('x', innerW / 2)
         .attr('y', innerH + 34)
         .attr('text-anchor', 'middle')
-        .attr('fill', axisTextColor)
-        .style('opacity', 0.75)
+        .attr('fill', axisLabelColor)
+        .style('opacity', 1)
         .style('font-size', '12px')
         .text(xLabel)
     }
@@ -71,8 +73,8 @@ export default function LineChart({ series, width = 860, height = 320, isDark = 
         .attr('class', 'axis-label-y')
         .attr('transform', `rotate(-90) translate(${-innerH / 2}, -42)`) // position left of y-axis
         .attr('text-anchor', 'middle')
-        .attr('fill', axisTextColor)
-        .style('opacity', 0.75)
+        .attr('fill', axisLabelColor)
+        .style('opacity', 1)
         .style('font-size', '12px')
         .text(yLabel)
     }
@@ -145,7 +147,7 @@ export default function LineChart({ series, width = 860, height = 320, isDark = 
     return () => {
       tooltip.remove()
     }
-  }, [series, width, height, isDark])
+  }, [series, width, height, isDark, labelColor])
 
   // Apply highlight styling without redrawing the chart
   useEffect(() => {
