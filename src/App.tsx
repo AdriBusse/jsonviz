@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Select, Spin, Table, Typography, Divider, FloatButton, Modal, Input, Space, Tag, Button, Checkbox, Popconfirm, message, Tooltip, Tabs, Collapse, Dropdown } from 'antd'
+import { Alert, Select, Spin, Table, Typography, Divider, FloatButton, Modal, Input, InputNumber, Space, Tag, Button, Checkbox, Popconfirm, message, Tooltip, Tabs, Collapse, Dropdown } from 'antd'
 import { UpOutlined, InfoCircleOutlined, RightOutlined, DownloadOutlined } from '@ant-design/icons'
 import './App.css'
 import './table-theme.css'
@@ -146,6 +146,8 @@ function App() {
   // Per-section applied filter ID (single) and explicit selected rows
   const [sectionFilters, setSectionFilters] = useState<Record<number, string | null>>({})
   const [sectionRows, setSectionRows] = useState<Record<number, string[]>>({})
+  // Per-section near-maximum threshold for table highlighting (absolute diff from row max)
+  const [nearMaxThresholds, setNearMaxThresholds] = useState<Record<number, number>>({})
   // UI state for filter manager
   const [filterModalOpen, setFilterModalOpen] = useState(false)
   const [editingFilter, setEditingFilter] = useState<SavedFilter | null>(null)
@@ -331,6 +333,15 @@ function App() {
         compactRows[newIdx] = rows
       }
     })
+    // Compact per-table near-max thresholds
+    const compactNear: Record<number, number> = {}
+    Object.entries(nearMaxThresholds).forEach(([idxStr, thr]) => {
+      const origIdx = Number(idxStr)
+      if (!Number.isNaN(origIdx) && indexMap.has(origIdx)) {
+        const newIdx = indexMap.get(origIdx) as number
+        if (typeof thr === 'number' && Number.isFinite(thr)) compactNear[newIdx] = thr
+      }
+    })
     const diagramsCompact = (diagramSections || [])
       .filter((d) => d.key && d.metricBase)
       .map((d) => ({ key: d.key as string, metricBase: d.metricBase as string }))
@@ -343,6 +354,7 @@ function App() {
       dataKeySections: keys,
       sectionFilters: compactFilters,
       sectionRows: compactRows,
+      sectionNearMaxThresholds: compactNear,
       diagramSections: diagramsCompact,
       // Back-compat single pareto (use first section or current single state)
       pareto: (() => {
@@ -417,6 +429,7 @@ function App() {
     pendingSuiteKeysRef.current = suite.dataKeySections ?? []
     setSectionFilters(suite.sectionFilters ?? {})
     setSectionRows(suite.sectionRows ?? {})
+    setNearMaxThresholds(suite.sectionNearMaxThresholds ?? {})
     // Defer applying diagrams until keys and metric bases are ready
     const ds = (suite.diagramSections ?? []).filter((d) => d && d.key && d.metricBase) as { key: string; metricBase: string }[]
     pendingSuiteDiagramsRef.current = ds
@@ -1280,6 +1293,9 @@ function App() {
       metricList = applyFiltersToMetrics(metricList, filterId, rows)
     }
 
+    // Threshold for near-max highlighting (absolute difference from row max)
+    const nearThr = nearMaxThresholds[sectionIndex] ?? 0.05
+
     const dataSource = metricList.map((metric) => {
       const row: any = { key: metric, metric }
       for (const f of validFiles) {
@@ -1339,6 +1355,7 @@ function App() {
             if (!Number.isFinite(num)) return String(v)
             if (ext && ext.count >= 2) {
               if (num === ext.max) return <span className="cell-max">{numFmt(num)}</span>
+              if (num >= ext.max - nearThr) return <span className="cell-near-max">{numFmt(num)}</span>
               if (num === ext.min) return <span className="cell-min">{numFmt(num)}</span>
             }
             return numFmt(num)
@@ -1640,6 +1657,24 @@ function App() {
                                     onChange={(val) => setSectionFilters((prev) => ({ ...prev, [idx]: (val as string) || null }))}
                                     allowClear
                                   />
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                    <span style={{ color: isDark ? '#aaa' : '#666' }}>Near-max:</span>
+                                    <Tooltip title="Highlight values within this absolute distance from the row max">
+                                      <InputNumber
+                                        size="small"
+                                        min={0}
+                                        step={0.01}
+                                        value={nearMaxThresholds[idx] ?? 0.05}
+                                        onChange={(val) =>
+                                          setNearMaxThresholds((prev) => ({
+                                            ...prev,
+                                            [idx]: typeof val === 'number' && !Number.isNaN(val) ? val : 0.05,
+                                          }))
+                                        }
+                                        style={{ width: 90 }}
+                                      />
+                                    </Tooltip>
+                                  </span>
                                   <Button
                                     onClick={() => {
                                       const allMetrics = getMetricList(key)
@@ -2217,6 +2252,7 @@ function App() {
               <li>Selected datasets</li>
               <li>Chosen data keys (tables)</li>
               <li>Applied per-table filter and rows</li>
+              <li>Per-table near-max thresholds</li>
               <li>Diagram sections (data key + metric)</li>
               <li>Pareto sections (metrics, k selections, display options)</li>
             </ul>

@@ -52,6 +52,8 @@ export type SavedSuite = {
   dataKeySections: string[]
   sectionFilters: Record<number, string | null>
   sectionRows: Record<number, string[]>
+  // New: per-table near-max thresholds (absolute diff), keyed by compact section index
+  sectionNearMaxThresholds?: Record<number, number>
   diagramSections?: { key: string; metricBase: string }[]
   // Backward-compatible single Pareto configuration
   pareto?: SavedPareto

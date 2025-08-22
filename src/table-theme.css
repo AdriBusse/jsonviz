@@ -124,3 +124,9 @@
   color: #e74c3c !important; /* red */
   font-weight: 600;
 }
+
+/* Near-maximum highlighting (lighter green) */
+.themedTable .cell-near-max {
+  color: #7bdcb5 !important; /* light green */
+  font-weight: 600;
+}
