@@ -36,6 +36,8 @@ export type SavedPareto = {
   showDiagonal: boolean
   maximizeX: boolean
   maximizeY: boolean
+  // New: per-section near-tie threshold (absolute |y-x| tolerance) for maximize-side line
+  nearTieThreshold?: number
 }
 
 export type SavedRadar = {

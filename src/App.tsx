@@ -385,6 +385,7 @@ function App() {
           maximize: (baseSec.maximize as 'y' | 'none' | 'x') ?? 'none',
           maximizeX: !!baseSec.maximizeX,
           maximizeY: !!baseSec.maximizeY,
+          nearTieThreshold: typeof (baseSec as any).nearTieThreshold === 'number' ? (baseSec as any).nearTieThreshold : 0,
         } as SavedPareto
       })(),
       // New: all pareto sections; embed current globals (baseline/variant/categories)
@@ -402,6 +403,7 @@ function App() {
         maximize: (s.maximize as 'y' | 'none' | 'x') ?? 'none',
         maximizeX: !!s.maximizeX,
         maximizeY: !!s.maximizeY,
+        nearTieThreshold: typeof s.nearTieThreshold === 'number' ? s.nearTieThreshold : 0,
       })),
       // Radar (back-compat single); prefer first populated section if available
       radar: (() => {
@@ -488,6 +490,7 @@ function App() {
         maximize: (s.maximize as 'y' | 'none' | 'x') ?? 'none',
         maximizeX: !!s.maximizeX,
         maximizeY: !!s.maximizeY,
+        nearTieThreshold: typeof s.nearTieThreshold === 'number' ? s.nearTieThreshold : 0,
       }))
       setParetoSections(normalized)
     } else {
@@ -505,6 +508,7 @@ function App() {
           maximize: 'none',
           maximizeX: false,
           maximizeY: false,
+          nearTieThreshold: typeof suite.pareto?.nearTieThreshold === 'number' ? suite.pareto.nearTieThreshold : 0,
         },
       ])
     }
@@ -793,6 +797,7 @@ function App() {
       maximize: 'none',
       maximizeX: false,
       maximizeY: false,
+      nearTieThreshold: 0,
     },
   ])
 

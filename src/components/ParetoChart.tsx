@@ -19,6 +19,8 @@ type Props = {
   showDiagonal?: boolean
   maximizeX?: boolean
   maximizeY?: boolean
+  // Absolute tolerance to consider near-ties as included on the favored side
+  nearTieThreshold?: number
   exportRef?: (el: SVGSVGElement | null) => void
 }
 
@@ -33,11 +35,13 @@ export default function ParetoChart({
   showDiagonal = true,
   maximizeX = true,
   maximizeY = true,
+  nearTieThreshold = 0,
   exportRef,
 }: Props) {
   const ref = useRef<SVGSVGElement | null>(null)
 
   useEffect(() => {
+    const thr = Math.max(0, Number.isFinite(nearTieThreshold) ? nearTieThreshold : 0)
     const svg = d3.select(ref.current).style('color', isDark ? '#fff' : '#000')
     svg.selectAll('*').remove()
     const margin = { top: 16, right: 24, bottom: 44, left: 60 }
@@ -342,8 +346,8 @@ export default function ParetoChart({
       const eps = 0
       const side = maximizeX ? 'X' : 'Y'
       const subset = maximizeX
-        ? points.filter((p) => p.x >= p.y - eps)
-        : points.filter((p) => p.y >= p.x - eps)
+        ? points.filter((p) => p.x + thr >= p.y - eps)
+        : points.filter((p) => p.y + thr >= p.x - eps)
       if (subset.length >= 2) {
         const sorted = maximizeX
           ? subset.slice().sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x))
@@ -380,7 +384,7 @@ export default function ParetoChart({
               <div><strong>Maximize ${side} line</strong></div>
               <div>Points on line: <strong>${subset.length}</strong></div>
               ${subset.length ? `<div>${list}</div>` : ''}
-              <div style="margin-top:4px;color:${isDark ? '#bbb' : '#666'}">Note: ties (x=y) count for both sides.</div>
+              <div style="margin-top:4px;color:${isDark ? '#bbb' : '#666'}">Tolerance: ±${thr.toFixed(5)} around y=x. Ties (x=y) count for both sides.</div>
             `
             tooltip.html(html).style('display', 'block')
           })
@@ -396,7 +400,7 @@ export default function ParetoChart({
     return () => {
       tooltip.remove()
     }
-  }, [points, width, height, isDark, xLabel, yLabel, showFrontier, showDiagonal, maximizeX, maximizeY])
+  }, [points, width, height, isDark, xLabel, yLabel, showFrontier, showDiagonal, maximizeX, maximizeY, nearTieThreshold])
 
   // Expose SVG element to parent for export
   useEffect(() => {

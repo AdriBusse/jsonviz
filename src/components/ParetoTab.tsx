@@ -1,4 +1,4 @@
-import { Divider, Space, Select, Popconfirm, Dropdown, Button, Tooltip, Tag, Switch, Segmented } from 'antd'
+import { Divider, Space, Select, Popconfirm, Dropdown, Button, Tooltip, Tag, Switch, Segmented, Input } from 'antd'
 import { InfoCircleOutlined, DownloadOutlined } from '@ant-design/icons'
 import ParetoChart from './ParetoChart'
 import type { LoadedFile, SavedPareto } from '../types'
@@ -118,7 +118,7 @@ export default function ParetoTab(props: ParetoTabProps) {
                       <Popconfirm title="Remove this section?" onConfirm={() => {
                         setParetoSections((prev) => {
                           const next = prev.filter((_, i) => i !== idx)
-                          return next.length > 0 ? next : [{ baseline: null, variant: null, categories: paretoCategories, metricBases: [], ks: [], metricKByBase: {}, showFrontier: true, showDiagonal: true, maximize: 'none', maximizeX: false, maximizeY: false }]
+                          return next.length > 0 ? next : [{ baseline: null, variant: null, categories: paretoCategories, metricBases: [], ks: [], metricKByBase: {}, showFrontier: true, showDiagonal: true, maximize: 'none', maximizeX: false, maximizeY: false, nearTieThreshold: 0 }]
                         })
                       }}>
                         <Button size="small" danger>Remove</Button>
@@ -163,7 +163,7 @@ export default function ParetoTab(props: ParetoTabProps) {
                           const next = [...prev]
                           next[idx] = { ...next[idx], categories: vals as string[] }
                           if (idx === prev.length - 1 && isPlaceholder) {
-                            next.push({ baseline: null, variant: null, categories: paretoCategories, metricBases: [], ks: [], metricKByBase: {}, showFrontier: true, showDiagonal: true, maximize: 'none', maximizeX: false, maximizeY: false })
+                            next.push({ baseline: null, variant: null, categories: paretoCategories, metricBases: [], ks: [], metricKByBase: {}, showFrontier: true, showDiagonal: true, maximize: 'none', maximizeX: false, maximizeY: false, nearTieThreshold: 0 })
                           }
                           return next
                         })
@@ -193,7 +193,7 @@ export default function ParetoTab(props: ParetoTabProps) {
                           next[idx] = updated
                           // auto-add placeholder at end
                           if (idx === prev.length - 1) {
-                            next.push({ baseline: null, variant: null, categories: paretoCategories, metricBases: [], ks: [], metricKByBase: {}, showFrontier: true, showDiagonal: true, maximize: 'none', maximizeX: false, maximizeY: false })
+                            next.push({ baseline: null, variant: null, categories: paretoCategories, metricBases: [], ks: [], metricKByBase: {}, showFrontier: true, showDiagonal: true, maximize: 'none', maximizeX: false, maximizeY: false, nearTieThreshold: 0 })
                           }
                           return next
                         })
@@ -269,7 +269,7 @@ export default function ParetoTab(props: ParetoTabProps) {
                           setParetoSections((prev) => {
                             const next = [...prev]
                             next[idx] = { ...next[idx], baseline: paretoBaseline, variant: paretoVariant, metricBase: v as string }
-                            if (idx === prev.length - 1) next.push({ baseline: null, variant: null, categories: paretoCategories, metricBases: [], ks: [], metricKByBase: {}, showFrontier: true, showDiagonal: true, maximize: 'none', maximizeX: false, maximizeY: false })
+                            if (idx === prev.length - 1) next.push({ baseline: null, variant: null, categories: paretoCategories, metricBases: [], ks: [], metricKByBase: {}, showFrontier: true, showDiagonal: true, maximize: 'none', maximizeX: false, maximizeY: false, nearTieThreshold: 0 })
                             return next
                           })
                         }}
@@ -286,7 +286,7 @@ export default function ParetoTab(props: ParetoTabProps) {
                             const kVal = Number(v)
                             const hasKs = Array.isArray(next[idx].ks) && next[idx].ks!.length > 0
                             next[idx] = hasKs ? { ...next[idx], ks: [kVal] } : { ...next[idx], k: kVal }
-                            if (idx === prev.length - 1) next.push({ baseline: null, variant: null, categories: paretoCategories, metricBases: [], ks: [], metricKByBase: {}, showFrontier: true, showDiagonal: true, maximize: 'none', maximizeX: false, maximizeY: false })
+                            if (idx === prev.length - 1) next.push({ baseline: null, variant: null, categories: paretoCategories, metricBases: [], ks: [], metricKByBase: {}, showFrontier: true, showDiagonal: true, maximize: 'none', maximizeX: false, maximizeY: false, nearTieThreshold: 0 })
                             return next
                           })
                         }}
@@ -314,6 +314,20 @@ export default function ParetoTab(props: ParetoTabProps) {
                         onChange={(v) => setParetoSections((prev) => { const next = [...prev]; next[idx] = { ...next[idx], maximize: v as 'y' | 'none' | 'x', maximizeX: v === 'x', maximizeY: v === 'y' }; return next })}
                         className={`tri tri-${sec.maximize ?? 'none'}`}
                       />
+                      <span className="form-inline-label">Near-tie</span>
+                      <Tooltip title="Absolute tolerance added to the favored axis when drawing the X or Y line (includes near ties).">
+                        <Input
+                          type="number"
+                          step={0.001}
+                          min={0}
+                          style={{ width: 90 }}
+                          value={sec.nearTieThreshold ?? 0}
+                          onChange={(e: any) => {
+                            const v = Number(e.target.value)
+                            setParetoSections((prev) => { const next = [...prev]; next[idx] = { ...next[idx], nearTieThreshold: Number.isFinite(v) && v >= 0 ? v : 0 }; return next })
+                          }}
+                        />
+                      </Tooltip>
                     </Space>
                   </div>
                 </div>
@@ -333,6 +347,7 @@ export default function ParetoTab(props: ParetoTabProps) {
                       showDiagonal={!!sec.showDiagonal}
                       maximizeX={!!sec.maximizeX || sec.maximize === 'x'}
                       maximizeY={!!sec.maximizeY || sec.maximize === 'y'}
+                      nearTieThreshold={sec.nearTieThreshold ?? 0}
                       exportRef={(el: SVGSVGElement | null) => { setParetoSvgRef(idx, el) }}
                     />
                   </div>
